@@ -39,6 +39,14 @@ export interface MatchedAnnouncement {
   similarity: number;
   /** 요청한 키워드 중 실제로 이 공고에서 걸린 것 */
   matchedKeywords: string[];
+  /**
+   * 이 공고가 후보에 든 이유.
+   * keyword: 키워드가 걸려서 / semantic: 키워드는 안 걸렸지만 프로필과 의미가 가까워서.
+   * 키워드를 안 넣었으면 전부 semantic 이다.
+   */
+  matchedBy: "keyword" | "semantic";
+  /** 같은 공고가 잡힌 다른 소스 (중복을 접고 남긴 흔적) */
+  duplicateSources: string[];
 }
 
 /** 3차 LLM 정밀 평가 결과 */

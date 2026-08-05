@@ -4,6 +4,7 @@ import { announcements, db } from "@/db";
 
 import { extractKeywords, normalizeKeywords } from "../keywords";
 import type { MatchedAnnouncement, MatchFilter } from "../types";
+import { dedupeAnnouncements } from "./dedupe";
 import {
   candidateLimit,
   findMatchedKeywords,
@@ -66,11 +67,17 @@ export async function keywordSearchAnnouncements(
     .limit(candidateLimit(limit, keywords.length));
 
   // 유사도 개념이 없으므로 0 으로 채우고 mode 로 구분한다 — 순서는 키워드 적중률이 정한다
-  const matches = rows.map((row) => ({
-    ...row,
-    similarity: 0,
-    matchedKeywords: findMatchedKeywords(row, keywords),
-  }));
+  const matches = rows.map(
+    (row) =>
+      ({
+        ...row,
+        similarity: 0,
+        matchedKeywords: findMatchedKeywords(row, keywords),
+        // 이 경로는 애초에 키워드로만 찾는다
+        matchedBy: "keyword",
+        duplicateSources: [],
+      }) satisfies MatchedAnnouncement,
+  );
 
-  return rankByKeywords(matches, keywords.length, limit);
+  return dedupeAnnouncements(rankByKeywords(matches, keywords.length, limit));
 }

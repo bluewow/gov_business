@@ -22,12 +22,12 @@ const MODES: { value: KeywordMode; label: string; hint: string }[] = [
   {
     value: "any",
     label: "하나라도 포함",
-    hint: "키워드 중 하나만 걸려도 보여줍니다 — 넓게 훑을 때",
+    hint: "키워드 중 하나만 걸려도 후보에 넣습니다 — 넓게 훑을 때",
   },
   {
     value: "all",
     label: "모두 포함",
-    hint: "키워드를 전부 포함한 공고만 — 좁혀 들어갈 때",
+    hint: "키워드를 전부 포함한 공고만 후보에 넣습니다 — 좁혀 들어갈 때",
   },
 ];
 
@@ -158,8 +158,12 @@ export function CurationPanel({
           <p className="text-muted-foreground text-xs">
             Enter 또는 쉼표로 추가합니다. 제목·본문뿐 아니라
             분야·지역·지원대상·기관 어디에 들어 있어도 찾으므로
-            「경기」·「창업」 같은 말도 키워드로 그냥 넣으면 됩니다. 키워드를
-            비우면 사업 프로필과 가까운 순서로 전체를 훑습니다.
+            「경기」·「창업」 같은 말도 키워드로 그냥 넣으면 됩니다.{" "}
+            <strong className="text-foreground font-medium">
+              키워드는 방향을 줄 뿐 걸러내지 않습니다
+            </strong>{" "}
+            — 키워드가 안 걸려도 내 사업과 의미가 가까운 공고는 「의미 유사」로
+            함께 보여줍니다.
           </p>
         </div>
 
@@ -211,10 +215,12 @@ export function CurationPanel({
             className="accent-primary mt-0.5 size-4"
           />
           <span className="flex flex-col gap-0.5">
-            <span>상위 5건 LLM 정밀 평가</span>
+            <span>LLM 정밀 평가 (후보 30건)</span>
             <span className="text-muted-foreground text-xs">
-              적합도 점수와 추천 이유를 붙입니다. 공고당 1회 LLM 호출이
-              발생합니다.
+              유사도만으로는 자격 요건(업력·지역·업종)이 맞는지 알 수 없어, 후보
+              30건을 LLM 이 보고 적합도 점수·추천 이유를 매긴 뒤 상위만
+              보여줍니다. 처음엔 30초쯤 걸리고, 한 번 평가한 공고는 캐시돼
+              다음부터 즉시 나옵니다.
             </span>
           </span>
         </label>

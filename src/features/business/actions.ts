@@ -9,7 +9,9 @@ import { db, userBusinesses } from "@/db";
 import { getCurrentUser } from "@/lib/current-user";
 import { createEmbedding } from "@/lib/embedding";
 import { isAiEnabled } from "@/lib/env";
-import { contentHash, normalizeWhitespace } from "@/lib/text";
+import { contentHash } from "@/lib/text";
+
+import { buildEmbeddingSource } from "./embedding-source";
 
 export interface SaveBusinessInput {
   id?: string | null;
@@ -26,24 +28,6 @@ export interface SaveBusinessResult {
   businessId?: string;
   embedded: boolean;
   error?: string;
-}
-
-/** 임베딩 원문 — 추천 품질은 이 문장 구성에 좌우된다 */
-function buildEmbeddingSource(input: SaveBusinessInput): string {
-  return normalizeWhitespace(
-    [
-      input.title,
-      input.category ? `분야: ${input.category}` : null,
-      input.region ? `지역: ${input.region}` : null,
-      input.businessAgeMonth !== null && input.businessAgeMonth !== undefined
-        ? `업력: ${input.businessAgeMonth}개월`
-        : null,
-      input.keywords?.length ? `키워드: ${input.keywords.join(", ")}` : null,
-      input.description,
-    ]
-      .filter(Boolean)
-      .join("\n\n"),
-  );
 }
 
 export async function saveBusiness(

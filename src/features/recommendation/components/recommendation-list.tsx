@@ -39,6 +39,35 @@ function ScoreBadge({
   return <Badge variant="outline">키워드 일치</Badge>;
 }
 
+/**
+ * 이 공고가 왜 후보에 들었는지.
+ * 키워드가 안 걸렸는데도 올라온 공고를 "의미 유사" 로 밝혀 준다 —
+ * 키워드는 게이트가 아니라 힌트라는 걸 결과에서 바로 알 수 있게.
+ */
+function MatchReasonBadges({
+  item,
+  hasKeywords,
+}: {
+  item: RecommendationItem;
+  hasKeywords: boolean;
+}) {
+  if (!hasKeywords) return null;
+
+  if (item.matchedKeywords.length === 0) {
+    return <Badge variant="secondary">의미 유사</Badge>;
+  }
+
+  return (
+    <>
+      {item.matchedKeywords.map((keyword) => (
+        <Badge key={keyword} variant="outline">
+          #{keyword}
+        </Badge>
+      ))}
+    </>
+  );
+}
+
 function DeadlineBadge({ endDate }: { endDate: Date | null }) {
   const remaining = daysUntil(endDate);
   if (remaining === null) return <Badge variant="ghost">상시</Badge>;
@@ -80,7 +109,12 @@ export function RecommendationList({
     <div className="flex flex-col gap-4">
       <p className="text-muted-foreground text-xs">
         {result.keywords.length > 0
-          ? `키워드 「${result.keywords.join(result.keywordMode === "all" ? " + " : ", ")}」 기준 ${result.items.length}건`
+          ? `키워드 「${result.keywords.join(result.keywordMode === "all" ? " + " : ", ")}」 ${
+              result.items.filter((item) => item.matchedBy === "keyword").length
+            }건 + 의미 유사 ${
+              result.items.filter((item) => item.matchedBy === "semantic")
+                .length
+            }건`
           : `키워드 없이 사업 프로필과 가까운 순서로 ${result.items.length}건`}
       </p>
 
@@ -96,16 +130,17 @@ export function RecommendationList({
             <div className="flex flex-wrap items-center gap-2">
               <ScoreBadge item={item} mode={result.mode} />
               <DeadlineBadge endDate={item.endDate} />
-              <Badge variant="secondary">{item.source}</Badge>
+              <Badge variant="secondary">
+                {[item.source, ...item.duplicateSources].join(" · ")}
+              </Badge>
               {item.isSample ? <SampleBadge /> : null}
               {item.region ? (
                 <Badge variant="ghost">{item.region}</Badge>
               ) : null}
-              {item.matchedKeywords.map((keyword) => (
-                <Badge key={keyword} variant="outline">
-                  #{keyword}
-                </Badge>
-              ))}
+              <MatchReasonBadges
+                item={item}
+                hasKeywords={result.keywords.length > 0}
+              />
             </div>
             <CardTitle className="text-base leading-6">
               <AnnouncementTitle

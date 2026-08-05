@@ -32,9 +32,10 @@
 [임베딩 생성]  text-embedding-3-small (1536d)      src/lib/embedding.ts
               ↓
 [추천 3단계]                                       src/features/recommendation/
-  1차 SQL 필터 (키워드·모집중)     ─┐
+  1차 하이브리드 후보 (모집중)     ─┐ 키워드 갈래 + 의미 갈래를 번갈아 합친다
   2차 코사인 유사도 (pgvector)     ─┤ cosineDistance() + HNSW  ← api/vector-search.ts
-  3차 LLM 정밀 평가 (상위 5건)     ─┘ gpt-4o-mini → {score, reason}
+     + 중복 접기 (제목·마감일)      ─┤ api/dedupe.ts
+  3차 LLM 정밀 평가 (후보 30건)    ─┘ gpt-4o-mini → {score, reason} → 상위 10건 표시
               ↓
 [지원서]                                           src/features/application/
   AI 요건 검토   reviewer.ts → {fitScore, checks[], strengths, weaknesses, actionItems}
@@ -48,7 +49,9 @@
 - **DB 는 Docker 로 로컬 관리** — `pgvector/pgvector:pg17`. Supabase 없이도 pgvector 가 그대로 동작한다.
 - **ORM 은 Drizzle** — pgvector 를 1급으로 다룬다. `vector()` 컬럼, `cosineDistance()`, HNSW 인덱스가 전부 스키마/쿼리로 표현된다. (Prisma 에서 옮겨온 이유는 아래 "왜 Drizzle 인가" 참고)
 - **프로필 임베딩을 저장해 재사용** — 추천 조회 자체는 OpenAI 호출이 0회다. LLM 은 3차 평가와 지원서 검토·작성에서만 쓴다.
-- **1차 필터는 지역/분야 대신 키워드** — 사용자가 키워드 몇 개를 넣어 결과를 보며 좁혀 가는 방식이다. 키워드는 제목·요약·본문·분야·지역·지원대상·기관을 한꺼번에 부분일치로 훑으므로 「경기」·「창업」을 넣으면 예전 지역/분야 필터와 같게 동작한다. 정규화·추출 헬퍼는 [keywords.ts](src/features/recommendation/keywords.ts)(순수 함수 — 클라이언트에서도 import 가능), SQL 조건과 순위 보정은 [api/keyword-filter.ts](src/features/recommendation/api/keyword-filter.ts) 에 있다.
+- **키워드는 게이트가 아니라 힌트 (하이브리드 검색)** — 지역/분야 필터 대신 키워드를 쓰되, **키워드를 SQL 하드 필터로만 쓰면 안 된다.** 실제로 그렇게 만들었다가, 문자열이 하나도 안 걸리는 공고는 벡터 검색이 보지도 못한 채 잘려 나가는 사고가 났다(모집중 475건 중 66건만 후보로 남았고, 사용자가 원하던 공고는 유사도가 아무리 높아도 탈락). 어휘가 달라도 의미로 찾으라고 임베딩을 쓰는 건데 그 앞에 문자열 게이트를 세우면 자기모순이다. 그래서 [api/vector-search.ts](src/features/recommendation/api/vector-search.ts) 는 두 갈래를 각각 뽑아 **번갈아 합친다**: `lexical`(키워드 통과분 중 유사도 상위) + `semantic`(키워드 무시 유사도 상위). 점수로 한 줄 세우면 한쪽이 다른 쪽을 밀어내므로 순번을 번갈아 준다. 결과 카드는 `matchedBy` 로 「#키워드」/「의미 유사」를 구분해 보여준다. 키워드 정규화·추출은 [keywords.ts](src/features/recommendation/keywords.ts)(순수 함수 — 클라이언트에서도 import 가능), SQL 조건은 [api/keyword-filter.ts](src/features/recommendation/api/keyword-filter.ts).
+- **유사도는 후보를 넓히는 체, 순위는 LLM 이 정한다** — 코사인 유사도만으로는 "이 공고의 지원대상에 내가 해당하는가"를 표현하지 못한다. 실측: 모집중 469건 중 119건이 0.45~0.55 구간에 몰리고 1위(0.545)와 33위(0.497)의 차이가 0.048뿐이라, 그 띠 안에서 순위는 노이즈에 가깝다. 그래서 유사도 상위 5건만 LLM 에 물어보던 구조에서는 자격이 맞는 공고가 33위에 있어도 평가 근처에 못 갔다. 지금은 **유사도로 후보 30건을 뽑아 전부 LLM 에 물어보고, 그 점수로 다시 줄여 10건을 보여준다**(`LLM_EVALUATION_CANDIDATES`). 표시 건수(`displayLimit`)와 후보 건수를 분리한 이유가 이것이다. 재조회는 `llm_evaluations` 캐시가 받아 주므로 새 공고가 들어올 때만 호출이 는다. LLM 에 넘기는 사업 요약은 `buildEmbeddingSource()` 로 만들어 **업력·지역·분야가 프롬프트에 반드시 들어가게** 한다 — 설명만 넘기면 자격 판정이 부실해지고, 캐시 키(`businessHash`)도 이 텍스트 기준이라 프롬프트와 한 곳에서 맞춰진다.
+- **같은 공고가 소스별로 중복 수집된다** — 기업마당 공고가 egbiz 에도 실리는 식으로, 실측 전체의 약 19%(제목 47개 × 2건)가 중복이다. 그대로 두면 추천 10칸 중 여러 칸을 같은 공고가 먹는다. [api/dedupe.ts](src/features/recommendation/api/dedupe.ts) 가 `(제목, 마감일)` 로 묶어 접고, 접힌 출처는 `duplicateSources` 에 남겨 카드에 `BIZINFO · EGBIZ` 로 병기한다. 제목만으로 묶으면 해마다 같은 이름으로 나오는 공고까지 뭉치므로 마감일을 같이 쓴다. **공고 목록(`/announcements`)에는 아직 이 처리가 없다.**
 - **OPENAI_API_KEY 가 없으면 키워드 검색으로 폴백** — DB·UI 개발이 API 키 없이도 가능하다. AI 검토·작성은 키가 있어야 동작하며, 없으면 화면에 사유를 표시한다.
 - **인증 없음** — [current-user.ts](src/lib/current-user.ts) 가 데모 계정 하나를 공유한다. 로그인을 붙일 때 이 파일만 바꾸면 된다.
 - **수집은 수동 실행만** — 자동 스케줄러도, 이를 위한 HTTP 엔드포인트도 두지 않는다. 유료 API 가 모르는 사이에 도는 것을 막기 위한 의도적인 제약이다. 나중에 자동화가 필요해지면 `ingestAll()` 을 호출하는 진입점을 새로 만들되, 비용이 새지 않는지부터 확인할 것.

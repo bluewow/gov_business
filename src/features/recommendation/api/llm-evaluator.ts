@@ -77,11 +77,14 @@ async function evaluateOne(
   }
 }
 
-/** 동시 요청 수 — 레이트리밋과 응답 속도의 절충 */
-const CONCURRENCY = 4;
+/**
+ * 동시 요청 수 — 레이트리밋과 응답 속도의 절충.
+ * 후보가 30건으로 늘면서 4로는 대기가 너무 길어져(8라운드) 8로 올렸다.
+ */
+const CONCURRENCY = 8;
 
 /**
- * 3차 정밀 평가. 상위 N건에만 돌린다 (건당 LLM 호출 = 비용).
+ * 3차 정밀 평가. 캐시에 없는 건만 넘어온다 (건당 LLM 호출 = 비용).
  * 반환은 announcement.id → 평가 결과 맵.
  */
 export async function evaluateAnnouncements(
