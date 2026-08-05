@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { useState, useTransition } from "react";
@@ -70,6 +71,9 @@ export function IngestionPanel({
       router.refresh();
     });
   }
+
+  // 서버 .env 든 이 탭에 넣은 키든 하나라도 있으면 임베딩을 돌릴 수 있다
+  const canEmbed = embedding.aiEnabled || Boolean(keys.openai);
 
   const embeddedRatio =
     embedding.total === 0
@@ -152,11 +156,23 @@ export function IngestionPanel({
               임베딩되지 않은 공고는 의미 기반 추천 대상에서 빠집니다. 첨부파일
               파싱 대기 {embedding.attachmentsPending}건.
             </p>
+            {!canEmbed ? (
+              <p className="text-destructive border-destructive/30 bg-destructive/5 rounded-lg border p-3 text-xs leading-5">
+                OpenAI API 키가 없어 임베딩을 만들 수 없습니다.{" "}
+                <Link
+                  href="/settings/api-keys"
+                  className="underline underline-offset-4"
+                >
+                  설정 → API 키
+                </Link>{" "}
+                에서 입력하거나 .env.local 에 OPENAI_API_KEY 를 추가하세요.
+              </p>
+            ) : null}
             <Button
               variant="outline"
               size="sm"
               className="self-start"
-              disabled={isPending || embedding.pending === 0}
+              disabled={isPending || embedding.pending === 0 || !canEmbed}
               onClick={embed}
             >
               {running === "EMBED"

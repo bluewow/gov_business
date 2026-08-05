@@ -8,6 +8,8 @@ import {
   type AnnouncementSource,
 } from "@/db";
 
+import { isAiEnabled } from "@/lib/env";
+
 import { adapters } from "../ingest";
 
 export interface SourceStatus {
@@ -71,6 +73,8 @@ export type IngestionRunItem = Awaited<
 >[number];
 
 export interface EmbeddingStatus {
+  /** 서버 .env 에 OpenAI 키가 있는지 (브라우저 입력 키는 클라이언트가 따로 본다) */
+  aiEnabled: boolean;
   total: number;
   embedded: number;
   pending: number;
@@ -94,6 +98,7 @@ export async function getEmbeddingStatus(): Promise<EmbeddingStatus> {
   ]);
 
   return {
+    aiEnabled: isAiEnabled(),
     total: totals?.total ?? 0,
     embedded: totals?.embedded ?? 0,
     pending: totals?.pending ?? 0,

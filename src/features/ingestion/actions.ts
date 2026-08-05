@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { isAiEnabled } from "@/lib/env";
 import { withRuntimeKeys, type RuntimeKeys } from "@/lib/runtime-keys";
 
 import type { AnnouncementSource } from "@/db";
@@ -57,6 +58,16 @@ export async function runEmbedding(keys?: RuntimeKeys): Promise<{
   error?: string;
 }> {
   return withRuntimeKeys(keys, async () => {
+    // 키가 없으면 조용히 0 을 돌려주는 대신 사유를 알린다.
+    // (embedPendingAnnouncements 는 키가 없으면 그냥 0 을 반환한다)
+    if (!isAiEnabled()) {
+      return {
+        embedded: 0,
+        error:
+          "OpenAI API 키가 없어 임베딩을 만들 수 없습니다. 사이드바 「설정 → API 키」 에서 입력해 주세요.",
+      };
+    }
+
     try {
       const embedded = await embedPendingAnnouncements();
       revalidateAll();
