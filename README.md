@@ -1,36 +1,197 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 정부지원사업 큐레이터
 
-## Getting Started
+정부지원사업 공고를 수집해 **내 사업과의 연관도를 분석하고**, 선택한 공고의 **자격요건 검토와 사업계획서 초안 작성**까지 이어지는 서비스.
 
-First, run the development server:
+공고를 일일이 찾아 읽고 "우리가 지원 대상인가?"를 판단하는 과정을 줄이는 것이 목표다.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+> ⚠️ 개발 중인 초안이다. 인증이 없고, 일부 수집 소스는 자리표시자 상태다. [알려진 한계](#알려진-한계) 참고.
+
+---
+
+## 무엇을 하는가
+
+화면 구성이 곧 진행 순서다. 왼쪽 사이드바가 4단계를 그대로 따라간다.
+
+| 단계       | 화면                        | 하는 일                                                                           |
+| ---------- | --------------------------- | --------------------------------------------------------------------------------- |
+| **STEP 1** | `/business` 사업 프로필     | 내 사업 설명을 등록한다. 저장 시 임베딩이 만들어지고 이후 모든 판단의 기준이 된다 |
+| **STEP 2** | `/ingestion` 수집 현황      | 소스별 수집 상태·수동 실행·임베딩 진행률·실행 이력                                |
+|            | `/announcements` 공고 목록  | 수집된 공고 탐색, 바로 지원서로 담기                                              |
+| **STEP 3** | `/recommendations` 큐레이션 | 키워드 + 프로필 임베딩으로 연관도 높은 공고를 추려낸다                            |
+| **STEP 4** | `/applications` 지원 관리   | 담아둔 공고의 AI 요건 검토 + 사업계획서 섹션별 초안 작성                          |
+
+### 추천은 3단계로 좁힌다
+
+```
+1차  키워드 · 모집중 여부를 SQL 로 필터링          ← 값싼 조건부터
+2차  프로필 임베딩과 공고 임베딩의 코사인 유사도    ← pgvector HNSW
+3차  상위 5건만 LLM 정밀 평가 → 적합도 + 추천 이유  ← 건당 호출이라 소수만
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+프로필 임베딩을 저장해 재사용하므로 **2차까지는 OpenAI 호출이 0회**다. LLM 비용은 3차 평가와 지원서 검토·작성에서만 발생한다.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### AI 요건 검토
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+공고의 자격요건을 항목별로 쪼개 내 사업과 대조한다.
 
-## Learn More
+- 각 요건을 `충족 / 미충족 / 확인 필요` 로 판정한다. **공고에 근거가 없으면 추측하지 않고 "확인 필요"** 로 남긴다.
+- 미충족이 하나라도 있으면 적합도 점수가 40점을 넘지 않는다.
+- 보완 사항은 "지금 당장 할 수 있는 행동"으로 뽑는다.
 
-To learn more about Next.js, take a look at the following resources:
+### 사업계획서 초안
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+PSST 표준 목차(문제인식 / 실현가능성 / 성장전략 / 팀)로 섹션별 초안을 만든다.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+**없는 수치를 지어내지 않는다.** 근거가 필요한 자리는 `[예: 2027년까지 월 매출 3,000만원]` 처럼 대괄호로 남겨 사용자가 채우게 한다. 앞서 나온 검토 결과의 약점·보완사항이 초안에 미리 반영되고, 뒤 섹션은 앞 섹션을 참고해 중복을 피한다.
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 수집 소스
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| 소스                       | 방식                    | 상태                                                     |
+| -------------------------- | ----------------------- | -------------------------------------------------------- |
+| **K-Startup 창업지원포털** | 공공데이터포털 오픈 API | ✅ 동작 (약 3만 건 조회 가능)                            |
+| **기업마당 (bizinfo)**     | 스크레이핑              | ✅ 동작 (지자체·부처 공고 집계처라 커버리지가 가장 넓다) |
+| **이지비즈 (egbiz)**       | 스크레이핑              | ⚠️ 자리표시자 — 목록 셀렉터 미확정                       |
+
+수집 파이프라인이 보장하는 것:
+
+- **중복이 쌓이지 않는다** — `(source, external_id)` 유니크 제약 + upsert. 같은 배치를 몇 번 돌려도 행 수가 늘지 않는다.
+- **바뀐 것만 다시 임베딩한다** — 임베딩 원문의 SHA-256 을 비교해, 내용이 실제로 바뀐 공고만 재생성한다. 안 바뀌었으면 API 를 호출하지 않는다.
+- **소스별로 독립 실행된다** — 한 소스가 실패해도 나머지는 진행되고, 실패 사유가 `ingestion_runs` 에 남는다.
+
+정기 실행은 `/api/cron/ingest` 를 스케줄러에 걸면 된다 (`CRON_SECRET` 설정 시 Bearer 인증).
+
+---
+
+## 기술 스택
+
+| 영역      | 선택                                             | 이유                                           |
+| --------- | ------------------------------------------------ | ---------------------------------------------- |
+| Framework | Next.js 16 (App Router, Server Actions)          |                                                |
+| DB        | PostgreSQL 17 + **pgvector** (Docker)            | 별도 벡터 DB 없이 한 곳에서 관계형 + 벡터 검색 |
+| ORM       | **Drizzle**                                      | pgvector 를 1급으로 다룬다 (아래 참고)         |
+| AI        | OpenAI `text-embedding-3-small`, `gpt-4o-mini`   |                                                |
+| UI        | Tailwind CSS 4 + shadcn/ui (Base UI)             |                                                |
+| 기타      | cheerio(스크레이핑), zod(LLM 응답 검증), Zustand |                                                |
+
+<details>
+<summary><b>왜 Prisma 가 아니라 Drizzle 인가</b></summary>
+
+Prisma 로 시작했다가 pgvector 때문에 옮겼다.
+
+| 항목                | Prisma                                                  | Drizzle                               |
+| ------------------- | ------------------------------------------------------- | ------------------------------------- |
+| `vector(1536)` 컬럼 | `Unsupported()` — 클라이언트로 읽기/쓰기 불가, raw 전용 | `vector({dimensions:1536})` 정식 타입 |
+| HNSW 인덱스         | 스키마로 표현 불가 → `migrate dev` 가 매번 DROP 을 제안 | `index().using("hnsw", …)`            |
+| 유사도 검색         | SQL 함수를 만들어 마이그레이션 밖에서 관리해야 했음     | `cosineDistance()` 를 TS 로 조합      |
+| 코드 생성           | 생성물 디렉토리 + `postinstall` 필요                    | 없음                                  |
+
+</details>
+
+---
+
+## 시작하기
+
+### 준비물
+
+- Node.js 20+, pnpm
+- Docker (DB 용)
+
+### 1. 설치 & DB 기동
+
+```bash
+pnpm install
+cp .env.example .env.local     # 값은 아래 참고
+pnpm db:setup                  # docker 기동 → 마이그레이션 → 샘플 데이터
+pnpm dev
+```
+
+http://localhost:3000 에서 STEP 1 부터 진행하면 된다.
+
+> DB 는 호스트 포트 **5434** 를 쓴다 (다른 프로젝트의 5432/5433 과 겹치지 않도록). 바꾸려면 `.env.local` 의 `POSTGRES_PORT` 와 `DATABASE_URL` 을 함께 수정한다.
+
+### 2. API 키
+
+키는 **두 방법 중 하나**로 넣는다.
+
+**(A) 브라우저에서 입력 — 휘발성**
+
+STEP 2 「수집 현황」 화면의 **API 키** 패널에 넣는다. sessionStorage 에만 저장되고(탭 닫으면 소멸), 요청할 때만 서버로 보내 그 요청에서 쓰고 버린다. DB·파일·로그에 남지 않는다.
+
+**(B) `.env.local` 에 저장 — 영구**
+
+무인 실행(cron)에는 이쪽이 필요하다. 읽는 우선순위는 **브라우저 키 > `.env`** 라 둘을 같이 써도 된다.
+
+| 키                       | 없으면                                                  |
+| ------------------------ | ------------------------------------------------------- |
+| `DATA_GO_KR_SERVICE_KEY` | K-Startup 수집을 건너뛴다 (기업마당은 키 불필요)        |
+| `OPENAI_API_KEY`         | 임베딩 생략 + 키워드 검색으로 폴백, AI 검토·작성 비활성 |
+
+키가 없어도 DB·UI 개발은 그대로 가능하다.
+
+> **data.go.kr 인증키 주의** — 포털의 "일반 인증키"는 URL 인코딩된 문자열(`%2B` 포함)이다. 그대로 쿼리에 넣으면 이중 인코딩돼 `SERVICE_KEY_IS_NOT_REGISTERED_ERROR` 가 난다. 이 프로젝트는 인코딩·디코딩 어느 쪽 키를 넣어도 동작하도록 처리해 뒀다.
+
+### 3. 공고 수집
+
+```bash
+pnpm ingest                          # 모든 소스
+pnpm ingest --source=K_STARTUP --max-pages=10
+pnpm ingest --source=BIZINFO --dry-run   # DB 에 쓰지 않고 파싱 결과만 확인
+pnpm db:embed                        # 미임베딩 공고만 임베딩
+```
+
+화면(STEP 2)의 「전체 수집」 버튼으로도 같은 일을 할 수 있다.
+
+---
+
+## 명령어
+
+| 명령어             | 설명                                |
+| ------------------ | ----------------------------------- |
+| `pnpm dev`         | 개발 서버                           |
+| `pnpm build`       | 프로덕션 빌드                       |
+| `pnpm typecheck`   | `tsc --noEmit`                      |
+| `pnpm lint`        | ESLint                              |
+| `pnpm db:setup`    | DB 기동 + 마이그레이션 + 시드       |
+| `pnpm db:generate` | 스키마 변경 → 마이그레이션 SQL 생성 |
+| `pnpm db:migrate`  | 마이그레이션 적용                   |
+| `pnpm db:studio`   | Drizzle Studio                      |
+| `pnpm db:nuke`     | 볼륨까지 삭제 (데이터 소멸)         |
+| `pnpm ingest`      | 공고 수집 CLI                       |
+
+---
+
+## 구조
+
+```
+src/
+├── db/                    # schema.ts 가 DB 정의의 유일한 출처
+├── app/                   # App Router — 화면이 곧 STEP 1~4
+├── features/
+│   ├── business/          # 사업 프로필 + 임베딩
+│   ├── ingestion/         # 수집 · 첨부 파싱 · 임베딩 갱신
+│   │   └── sources/       # 소스별 어댑터 (새 소스는 여기 추가)
+│   ├── announcement/      # 공고 조회 · 목록
+│   ├── recommendation/    # 벡터 검색 · LLM 평가
+│   └── application/       # 지원서 · AI 검토 · 초안 작성
+├── components/            # ui(shadcn) · layout · common
+└── lib/                   # db 접근 외 공통 유틸
+```
+
+기능은 `features/[name]/` 아래에 자기완결형으로 모은다 (View–Action–Container).
+새 수집 소스를 붙이려면 `AnnouncementSourceAdapter` 인터페이스만 구현하면 파이프라인에 그대로 붙는다.
+
+개발 시 규칙과 함정은 [CLAUDE.md](CLAUDE.md) 에 정리돼 있다.
+
+---
+
+## 알려진 한계
+
+- **인증이 없다.** 모든 화면이 데모 계정 하나를 공유한다.
+- **첨부파일 파서 미구현.** 정부지원사업은 본문이 HWP/PDF 첨부에만 있는 경우가 많은데, 현재는 plain-text 파서만 등록돼 있다. 추출 레이어의 인터페이스는 준비돼 있어 `registerParser()` 로 붙이면 파이프라인이 자동으로 쓴다. (붙인 뒤에는 기존 `UNSUPPORTED` 첨부를 `PENDING` 으로 되돌려야 재처리된다)
+- **이지비즈 어댑터가 자리표시자다.** 목록 셀렉터가 확정되지 않아 수집이 실패한다. 기업마당이 상당 부분을 대체한다.
+- **샘플 데이터가 섞여 있다.** `pnpm db:seed` 가 넣은 가짜 공고 6건은 화면에서 「샘플」 배지가 붙고 원문 링크가 막힌다. 지우려면 `DELETE FROM announcements WHERE is_sample;`
+- **원본에서 내려간 공고를 정리하지 않는다.** 마감일이 지나면 "모집중" 필터에서만 빠진다.
+- **수집 동시 실행 잠금이 없다.** cron 과 화면 버튼이 겹치면 같은 작업이 두 번 돈다 (결과는 upsert 라 안전하지만 API 호출이 낭비된다).
+- 초안 내보내기(HWP/워드), 알림(이메일·알림톡) 미구현.

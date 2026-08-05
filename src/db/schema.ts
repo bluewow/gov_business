@@ -1,0 +1,428 @@
+import { relations, sql } from "drizzle-orm";
+import {
+  boolean,
+  doublePrecision,
+  index,
+  integer,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+  vector,
+} from "drizzle-orm/pg-core";
+
+/**
+ * 컬럼/테이블 이름은 drizzle.config.ts 와 src/db/index.ts 의 casing: "snake_case" 로
+ * 자동 변환된다 (embeddingHash → embedding_hash). 새 컬럼을 추가할 때 별도 이름을 적지 않는다.
+ */
+
+/** text-embedding-3-small 차원 수 — 아래 vector() 정의와 반드시 일치해야 한다 */
+export const EMBEDDING_DIMENSIONS = 1536;
+
+// ── enums ──────────────────────────────────────────────────────
+
+export const announcementSourceEnum = pgEnum("announcement_source", [
+  "K_STARTUP",
+  "EGBIZ",
+  "BIZINFO",
+]);
+
+export const parseStatusEnum = pgEnum("parse_status", [
+  "PENDING",
+  "PARSED",
+  "UNSUPPORTED",
+  "FAILED",
+]);
+
+export const ingestionStatusEnum = pgEnum("ingestion_status", [
+  "RUNNING",
+  "SUCCESS",
+  "FAILED",
+]);
+
+/** 지원서 진행 단계 — 사이드바 4단계 흐름의 마지막 구간 */
+export const applicationStatusEnum = pgEnum("application_status", [
+  "SAVED",
+  "REVIEWED",
+  "WRITING",
+  "SUBMITTED",
+  "ARCHIVED",
+]);
+
+/** 요건 충족 여부 판정 */
+export const eligibilityVerdictEnum = pgEnum("eligibility_verdict", [
+  "MET",
+  "UNMET",
+  "UNKNOWN",
+]);
+
+export type AnnouncementSource =
+  (typeof announcementSourceEnum.enumValues)[number];
+export type ParseStatus = (typeof parseStatusEnum.enumValues)[number];
+export type IngestionStatus = (typeof ingestionStatusEnum.enumValues)[number];
+export type ApplicationStatus =
+  (typeof applicationStatusEnum.enumValues)[number];
+export type EligibilityVerdict =
+  (typeof eligibilityVerdictEnum.enumValues)[number];
+
+// ── 공통 컬럼 ──────────────────────────────────────────────────
+
+const timestamps = {
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+};
+
+const emptyTextArray = sql`'{}'::text[]`;
+
+// ── tables ─────────────────────────────────────────────────────
+
+export const users = pgTable("users", {
+  id: uuid().primaryKey().defaultRandom(),
+  email: text().notNull().unique(),
+  name: text(),
+  ...timestamps,
+});
+
+/** 사용자가 등록한 사업 아이템(프로필). 이 설명이 추천의 기준 벡터가 된다. */
+export const userBusinesses = pgTable(
+  "user_businesses",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    title: text().notNull(),
+    /** 사업 내용 상세 설명 — 임베딩 원문 */
+    description: text().notNull(),
+
+    /** 1차 필터링용 조건 */
+    region: text(),
+    category: text(),
+    /** 업력(개월). 예비창업자는 0 */
+    businessAgeMonth: integer(),
+    keywords: text().array().notNull().default(emptyTextArray),
+
+    embedding: vector({ dimensions: EMBEDDING_DIMENSIONS }),
+    /** 임베딩 원문의 SHA-256 — 값이 같으면 재임베딩을 건너뛴다 */
+    embeddingHash: text(),
+
+    ...timestamps,
+  },
+  (table) => [index("user_businesses_user_id_idx").on(table.userId)],
+);
+
+/** 수집된 지원사업 공고 */
+export const announcements = pgTable(
+  "announcements",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    source: announcementSourceEnum().notNull(),
+    /** 원본 시스템의 공고 ID (source 와 조합해 유일) */
+    externalId: text().notNull(),
+
+    title: text().notNull(),
+    /** 공고 본문 — 임베딩 원문의 일부 */
+    content: text().notNull(),
+    /** LLM 평가에 넣는 짧은 요약 */
+    summary: text(),
+    url: text().notNull(),
+
+    category: text(),
+    region: text(),
+    /** 지원 대상 원문 */
+    targetAudience: text(),
+    /** 주관 기관 */
+    agency: text(),
+    startDate: timestamp({ withTimezone: true }),
+    endDate: timestamp({ withTimezone: true }),
+
+    embedding: vector({ dimensions: EMBEDDING_DIMENSIONS }),
+    embeddingHash: text(),
+
+    /**
+     * seed 로 넣은 개발용 가짜 공고. 실제 수집 공고와 화면에서 구분하기 위한 표시다.
+     * url 이 사이트 루트라 「원문 보기」가 의미 없으므로 UI 에서 링크를 막는다.
+     */
+    isSample: boolean().notNull().default(false),
+
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("announcements_source_external_id_key").on(
+      table.source,
+      table.externalId,
+    ),
+    index("announcements_end_date_idx").on(table.endDate),
+    index("announcements_region_category_idx").on(table.region, table.category),
+    // 코사인 유사도 검색용. cosineDistance() 오름차순 정렬일 때만 이 인덱스를 탄다.
+    index("announcements_embedding_hnsw_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
+    ),
+    // 제목 부분일치 (OPENAI_API_KEY 가 없을 때의 키워드 폴백 경로)
+    index("announcements_title_trgm_idx").using(
+      "gin",
+      table.title.op("gin_trgm_ops"),
+    ),
+  ],
+);
+
+/** 공고 첨부파일(HWP/PDF). 본문이 첨부에만 있는 공고가 많아 별도 추출 레이어를 둔다. */
+export const announcementAttachments = pgTable(
+  "announcement_attachments",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    announcementId: uuid()
+      .notNull()
+      .references(() => announcements.id, { onDelete: "cascade" }),
+
+    fileName: text().notNull(),
+    fileUrl: text().notNull(),
+    mimeType: text(),
+
+    /** 파서가 뽑아낸 텍스트 — 임베딩 원문에 합쳐진다 */
+    extractedText: text(),
+    parseStatus: parseStatusEnum().notNull().default("PENDING"),
+    parseError: text(),
+
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("announcement_attachments_announcement_id_file_url_key").on(
+      table.announcementId,
+      table.fileUrl,
+    ),
+    index("announcement_attachments_parse_status_idx").on(table.parseStatus),
+  ],
+);
+
+/** 사용자가 "이 공고에 지원해 보겠다"고 담아둔 건. AI 검토·작성의 작업 단위. */
+export const applications = pgTable(
+  "applications",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userBusinessId: uuid()
+      .notNull()
+      .references(() => userBusinesses.id, { onDelete: "cascade" }),
+    announcementId: uuid()
+      .notNull()
+      .references(() => announcements.id, { onDelete: "cascade" }),
+
+    status: applicationStatusEnum().notNull().default("SAVED"),
+    memo: text(),
+    /** 담을 당시의 코사인 유사도 (추천 화면에서 넘어온 경우) */
+    similarityAtSave: doublePrecision(),
+
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("applications_user_business_id_announcement_id_key").on(
+      table.userBusinessId,
+      table.announcementId,
+    ),
+    index("applications_status_updated_at_idx").on(
+      table.status,
+      table.updatedAt,
+    ),
+  ],
+);
+
+/** AI 요건 검토 결과 (지원서당 1건, 다시 돌리면 덮어쓴다) */
+export const applicationReviews = pgTable("application_reviews", {
+  id: uuid().primaryKey().defaultRandom(),
+  applicationId: uuid()
+    .notNull()
+    .unique()
+    .references(() => applications.id, { onDelete: "cascade" }),
+
+  /** 종합 적합도 0~100 */
+  fitScore: integer().notNull(),
+  /** 2~3줄 총평 */
+  summary: text().notNull(),
+
+  strengths: text().array().notNull().default(emptyTextArray),
+  weaknesses: text().array().notNull().default(emptyTextArray),
+  actionItems: text().array().notNull().default(emptyTextArray),
+
+  /** 검토에 사용한 모델 — 재현/디버깅용 */
+  model: text().notNull(),
+  ...timestamps,
+});
+
+/** 공고의 개별 자격요건에 대한 판정 */
+export const applicationEligibilityChecks = pgTable(
+  "application_eligibility_checks",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    reviewId: uuid()
+      .notNull()
+      .references(() => applicationReviews.id, { onDelete: "cascade" }),
+
+    requirement: text().notNull(),
+    verdict: eligibilityVerdictEnum().notNull().default("UNKNOWN"),
+    note: text(),
+    order: integer().notNull().default(0),
+  },
+  (table) => [
+    index("application_eligibility_checks_review_id_order_idx").on(
+      table.reviewId,
+      table.order,
+    ),
+  ],
+);
+
+/** 사업계획서 섹션별 초안. 사용자가 직접 수정할 수 있고 섹션 단위로 재생성한다. */
+export const applicationDrafts = pgTable(
+  "application_drafts",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    applicationId: uuid()
+      .notNull()
+      .references(() => applications.id, { onDelete: "cascade" }),
+
+    /** PSST 등 표준 목차 키 — src/features/application/sections.ts 참고 */
+    sectionKey: text().notNull(),
+    title: text().notNull(),
+    content: text().notNull().default(""),
+    order: integer().notNull().default(0),
+
+    /** AI 가 생성한 시점. 사용자가 직접 고치면 그대로 두고 updatedAt 만 갱신된다. */
+    generatedAt: timestamp({ withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("application_drafts_application_id_section_key_key").on(
+      table.applicationId,
+      table.sectionKey,
+    ),
+    index("application_drafts_application_id_order_idx").on(
+      table.applicationId,
+      table.order,
+    ),
+  ],
+);
+
+/** 수집 배치 실행 기록 (cron 관측용) */
+export const ingestionRuns = pgTable(
+  "ingestion_runs",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    source: announcementSourceEnum().notNull(),
+    status: ingestionStatusEnum().notNull().default("RUNNING"),
+
+    fetchedCount: integer().notNull().default(0),
+    createdCount: integer().notNull().default(0),
+    updatedCount: integer().notNull().default(0),
+    embeddedCount: integer().notNull().default(0),
+
+    error: text(),
+    startedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp({ withTimezone: true }),
+  },
+  (table) => [
+    index("ingestion_runs_source_started_at_idx").on(
+      table.source,
+      table.startedAt,
+    ),
+  ],
+);
+
+// ── relations (db.query.*.findMany({ with }) 용) ────────────────
+
+export const usersRelations = relations(users, ({ many }) => ({
+  businesses: many(userBusinesses),
+}));
+
+export const userBusinessesRelations = relations(
+  userBusinesses,
+  ({ one, many }) => ({
+    user: one(users, {
+      fields: [userBusinesses.userId],
+      references: [users.id],
+    }),
+    applications: many(applications),
+  }),
+);
+
+export const announcementsRelations = relations(announcements, ({ many }) => ({
+  attachments: many(announcementAttachments),
+  applications: many(applications),
+}));
+
+export const announcementAttachmentsRelations = relations(
+  announcementAttachments,
+  ({ one }) => ({
+    announcement: one(announcements, {
+      fields: [announcementAttachments.announcementId],
+      references: [announcements.id],
+    }),
+  }),
+);
+
+export const applicationsRelations = relations(
+  applications,
+  ({ one, many }) => ({
+    userBusiness: one(userBusinesses, {
+      fields: [applications.userBusinessId],
+      references: [userBusinesses.id],
+    }),
+    announcement: one(announcements, {
+      fields: [applications.announcementId],
+      references: [announcements.id],
+    }),
+    review: one(applicationReviews, {
+      fields: [applications.id],
+      references: [applicationReviews.applicationId],
+    }),
+    drafts: many(applicationDrafts),
+  }),
+);
+
+export const applicationReviewsRelations = relations(
+  applicationReviews,
+  ({ one, many }) => ({
+    application: one(applications, {
+      fields: [applicationReviews.applicationId],
+      references: [applications.id],
+    }),
+    checks: many(applicationEligibilityChecks),
+  }),
+);
+
+export const applicationEligibilityChecksRelations = relations(
+  applicationEligibilityChecks,
+  ({ one }) => ({
+    review: one(applicationReviews, {
+      fields: [applicationEligibilityChecks.reviewId],
+      references: [applicationReviews.id],
+    }),
+  }),
+);
+
+export const applicationDraftsRelations = relations(
+  applicationDrafts,
+  ({ one }) => ({
+    application: one(applications, {
+      fields: [applicationDrafts.applicationId],
+      references: [applications.id],
+    }),
+  }),
+);
+
+// ── row 타입 ───────────────────────────────────────────────────
+
+export type User = typeof users.$inferSelect;
+export type UserBusiness = typeof userBusinesses.$inferSelect;
+export type Announcement = typeof announcements.$inferSelect;
+export type AnnouncementAttachment =
+  typeof announcementAttachments.$inferSelect;
+export type Application = typeof applications.$inferSelect;
+export type ApplicationReview = typeof applicationReviews.$inferSelect;
+export type ApplicationDraft = typeof applicationDrafts.$inferSelect;
+export type IngestionRun = typeof ingestionRuns.$inferSelect;

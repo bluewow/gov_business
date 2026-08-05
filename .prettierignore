@@ -1,0 +1,8 @@
+node_modules
+.next
+out
+public
+pnpm-lock.yaml
+
+# 생성물 / 벤더 파일
+drizzle

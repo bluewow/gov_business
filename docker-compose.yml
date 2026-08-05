@@ -1,0 +1,35 @@
+name: gov-biz
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: gov-biz-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-gov_biz}
+      TZ: Asia/Seoul
+      PGTZ: Asia/Seoul
+    ports:
+      # 로컬의 다른 프로젝트 DB(5432, 5433)와 겹치지 않도록 5434 를 기본값으로 쓴다.
+      # 바꾸려면 .env 의 POSTGRES_PORT 와 DATABASE_URL 을 함께 수정할 것.
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # 최초 기동 시 1회만 실행된다 (볼륨이 비어 있을 때).
+      # 스키마 변경은 여기가 아니라 prisma migrate 로 관리한다.
+      - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-gov_biz}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  postgres-data:
