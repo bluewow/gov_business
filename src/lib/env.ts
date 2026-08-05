@@ -36,7 +36,7 @@ export const env = {
     const key = runtimeKey("openai") ?? read("OPENAI_API_KEY");
     if (!key) {
       throw new Error(
-        "OpenAI API 키가 없습니다. STEP 2 수집 현황 화면의 「API 키」 패널에 입력하거나 .env.local 에 OPENAI_API_KEY 를 추가하세요.",
+        "OpenAI API 키가 없습니다. 사이드바 「설정 → API 키」 에서 입력하거나 .env.local 에 OPENAI_API_KEY 를 추가하세요.",
       );
     }
     return key;

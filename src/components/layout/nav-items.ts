@@ -3,6 +3,7 @@ import {
   Building2,
   DownloadCloud,
   FileText,
+  KeyRound,
   LayoutDashboard,
   ListFilter,
   Sparkles,
@@ -16,7 +17,7 @@ export interface NavItem {
 }
 
 export interface NavGroup {
-  /** 흐름상의 단계 번호. 개요 그룹은 null. */
+  /** 흐름상의 단계 번호. 개요·설정 그룹은 null. */
   step: number | null;
   title: string;
   items: NavItem[];
@@ -90,6 +91,19 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "지원 관리",
         description: "AI 요건 검토 · 사업계획서 초안",
         icon: FileText,
+      },
+    ],
+  },
+  {
+    step: null,
+    title: "설정",
+    items: [
+      {
+        // 키는 STEP 2·3·4 어디서나 필요하므로 특정 단계에 묶지 않는다
+        href: "/settings/api-keys",
+        label: "API 키",
+        description: "공공데이터 · OpenAI 키 입력",
+        icon: KeyRound,
       },
     ],
   },

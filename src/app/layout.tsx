@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 
 import { AppSidebar } from "@/components/layout/app-sidebar";
+import { env } from "@/lib/env";
 import { QueryProvider } from "@/providers/query-provider";
 
 import "./globals.css";
@@ -31,7 +32,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="flex min-h-full">
         <QueryProvider>
-          <AppSidebar />
+          <AppSidebar
+            serverKeys={{
+              dataGoKr: Boolean(env.dataGoKrServiceKey()),
+              openai: Boolean(env.openaiApiKey()),
+            }}
+          />
           {/* 모바일 상단 바(h-14) 만큼 여백을 준다 */}
           <div className="flex min-w-0 flex-1 flex-col pt-14 lg:pt-0">
             {children}

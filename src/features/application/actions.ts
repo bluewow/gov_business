@@ -109,7 +109,7 @@ async function runReviewInner(applicationId: string): Promise<ActionResult> {
     return {
       ok: false,
       error:
-        "OPENAI_API_KEY 가 없어 AI 검토를 실행할 수 없습니다. .env.local 에 키를 넣어 주세요.",
+        "OpenAI API 키가 없어 AI 검토를 실행할 수 없습니다. 사이드바 「설정 → API 키」 에서 입력해 주세요.",
     };
   }
 
@@ -199,7 +199,7 @@ async function generateDraftInner(
     return {
       ok: false,
       error:
-        "OPENAI_API_KEY 가 없어 초안을 생성할 수 없습니다. 직접 작성은 그대로 가능합니다.",
+        "OpenAI API 키가 없어 초안을 생성할 수 없습니다. 사이드바 「설정 → API 키」 에서 입력해 주세요. (직접 작성은 그대로 가능합니다)",
     };
   }
 
