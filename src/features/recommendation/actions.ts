@@ -6,7 +6,7 @@ import { db, userBusinesses } from "@/db";
 import { buildEmbeddingSource } from "@/features/business";
 import { getPrimaryBusiness } from "@/lib/current-user";
 import { createEmbedding } from "@/lib/embedding";
-import { env, isAiEnabled } from "@/lib/env";
+import { isAiEnabled } from "@/lib/env";
 import { withRuntimeKeys, type RuntimeKeys } from "@/lib/runtime-keys";
 import { contentHash } from "@/lib/text";
 
@@ -16,7 +16,10 @@ import {
   getCachedEvaluations,
   saveEvaluations,
 } from "./api/evaluation-cache";
-import { evaluateAnnouncements } from "./api/llm-evaluator";
+import {
+  evaluateAnnouncements,
+  evaluatorFingerprint,
+} from "./api/llm-evaluator";
 import {
   matchAnnouncements,
   matchAnnouncementsForBusiness,
@@ -160,7 +163,8 @@ async function recommendInner(
     // 후보 전체를 LLM 에 물어보되, 이미 평가한 조합은 캐시에서 꺼낸다.
     // (키워드만 바꿔 재검색하는 패턴이 잦아 캐시가 없으면 같은 값을 반복 결제하게 된다)
     const targets = matches.slice(0, LLM_EVALUATION_CANDIDATES);
-    const model = env.evaluationModel();
+    // 모델명이 아니라 (모델 + 프롬프트) 지문을 캐시 키로 쓴다 — 프롬프트를 고치면 자동 재평가
+    const model = evaluatorFingerprint();
 
     // 설명만 넘기면 업력·지역·분야가 빠져 자격 판정이 부실해진다.
     // 임베딩과 같은 원문을 써서 프롬프트와 캐시 키를 한 곳에서 맞춘다.
