@@ -1,153 +1,244 @@
 import * as cheerio from "cheerio";
 
 import { env } from "@/lib/env";
-import { normalizeWhitespace, stripHtml } from "@/lib/text";
+import { normalizeWhitespace, parseKoreanDate, stripHtml } from "@/lib/text";
 
 import type {
   AnnouncementSourceAdapter,
   FetchOptions,
   RawAnnouncement,
+  RawAttachment,
 } from "../types";
 
 /**
- * 이지비즈(egbiz) — 공식 오픈 API 가 없어 목록/상세 페이지를 스크레이핑한다.
+ * 경기기업비서(egbiz) — 경기도 지원사업 공고.
  *
- * ⚠️ 셀렉터 검증 필요
- * 아래 SELECTORS 는 실제 마크업을 보고 채워야 하는 자리표시자다.
- * 확인 방법: `pnpm ingest --source=EGBIZ --dry-run` 을 돌리면 수집 0건과 함께
- * 요청한 URL 이 찍히므로, 그 페이지의 DOM 을 보고 셀렉터만 교체하면 된다.
+ * 목록 페이지(supportPrjCatList.do)는 자바스크립트로 채워져서 HTML 만 받아서는 항목이 비어 있다.
+ * 대신 그 페이지가 쓰는 JSON 엔드포인트를 직접 호출한다 — 인증 없이 GET 으로 동작하고
+ * pageIndex/pageUnit 로 페이징된다.
  *
- * 운영 시 주의:
- *  - robots.txt / 이용약관을 먼저 확인하고, 요청 간 간격(REQUEST_DELAY_MS)을 지킬 것
- *  - 목록 → 상세 순회는 요청 수가 많으므로 자주 돌리지 말 것 (하루 1~2회면 충분하다)
- *  - 마크업 변경에 취약하므로 수집 0건이면 알림이 가도록 IngestionRun 을 모니터링할 것
+ * 상세 페이지는 서버 렌더라 cheerio 로 읽을 수 있고, 아래 라벨 → 값 구조다.
+ *   <li>
+ *     <div class="conSec__con__title">신청자격</div>
+ *     <div class="conSec__con__desc">...</div>
+ *   </li>
+ * 항목 순서가 바뀌어도 안 깨지도록 라벨 기준으로 뽑는다.
+ *
+ * 참고: egbiz 공고 상당수는 본문 없이 기업마당(bizinfo) 링크만 걸어 둔다.
+ * 그래서 본문이 비면 목록 필드로 문맥을 채워 임베딩이 무의미해지지 않게 한다.
  */
 
-const SELECTORS = {
-  listItem: "table.board-list tbody tr",
-  listLink: "td.title a",
-  listDate: "td.date",
-  detailTitle: "h2.view-title, .board-view .title",
-  detailContent: ".board-view .content, .view-content",
-  detailAttachment: ".attach-list a, a.file-down",
-} as const;
+const LIST_PATH = "/sp/selectSupportPrjListAjax.do";
+const DETAIL_PATH = "/sp/supportPrjDtl.do";
 
-const REQUEST_DELAY_MS = 400;
+/** 상세 요청 간격 — 공용 사이트이므로 과하게 두드리지 않는다 */
+const REQUEST_DELAY_MS = 350;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function fetchHtml(url: string): Promise<string> {
+/** 목록 JSON 한 행 (실제 응답을 보고 확인한 필드만 선언) */
+interface ListRow {
+  /** 공고 식별자 — 상세 URL 파라미터이자 externalId */
+  bizCyclId?: string;
+  /** 공고명 */
+  bizNm?: string;
+  /** 접수 시작/종료일 (YYYY-MM-DD) */
+  aplyBgngDt?: string;
+  aplyEndDt?: string;
+  /** 수행기관 */
+  outsdInstNm?: string;
+  /** 분류 (예: 창업) */
+  categoryNm?: string;
+  /** 지원분야 구분 */
+  sareaSeCd?: string;
+}
+
+interface ListResponse {
+  result?: boolean;
+  value?: ListRow[];
+}
+
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) gov-biz-curator/0.1";
+
+function text(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const trimmed = String(value).trim();
+  return trimmed && trimmed !== "null" ? trimmed : null;
+}
+
+function detailUrl(bizCyclId: string): string {
+  return `${env.egbizBaseUrl()}${DETAIL_PATH}?listUrl=supportPrjCatList&bizCyclId=${bizCyclId}`;
+}
+
+async function fetchListPage(
+  page: number,
+  pageUnit: number,
+): Promise<ListRow[]> {
+  const url = `${env.egbizBaseUrl()}${LIST_PATH}?pageIndex=${page}&pageUnit=${pageUnit}`;
+
   const response = await fetch(url, {
     headers: {
-      // 기본 fetch UA 는 차단되는 경우가 많다
-      "User-Agent":
-        "Mozilla/5.0 (compatible; gov-biz-bot/0.1; +https://example.com/bot)",
-      Accept: "text/html,application/xhtml+xml",
+      "User-Agent": USER_AGENT,
+      Accept: "application/json",
+      "X-Requested-With": "XMLHttpRequest",
     },
     cache: "no-store",
   });
 
   if (!response.ok) {
-    throw new Error(`egbiz 페이지 요청 실패 (HTTP ${response.status}): ${url}`);
+    throw new Error(`egbiz 목록 요청 실패 (HTTP ${response.status}): ${url}`);
   }
-  return response.text();
+
+  const payload = (await response.json()) as ListResponse;
+  return payload.value ?? [];
 }
 
-function absoluteUrl(href: string, base: string): string {
-  try {
-    return new URL(href, base).toString();
-  } catch {
-    return href;
-  }
+/** `[인천] 2026년 …` 처럼 제목 앞에 붙는 지역 표기를 뽑아낸다 */
+function extractRegion(title: string): string | null {
+  const matched = title.match(/^\s*\[([^\]]{2,10})\]/);
+  const candidate = matched?.[1]?.trim();
+  if (!candidate) return null;
+  // [모집공고] 같은 비지역 태그는 걸러낸다
+  return /공고|모집|재공고|연장|변경/.test(candidate) ? null : candidate;
 }
 
-/** 상세 URL 에서 안정적인 식별자를 뽑는다 (쿼리 파라미터 우선, 없으면 경로 마지막 조각) */
-function externalIdFromUrl(url: string): string {
-  const parsed = new URL(url);
-  for (const key of ["seq", "idx", "id", "bbsSeq", "nttId"]) {
-    const value = parsed.searchParams.get(key);
-    if (value) return value;
+/** 상세 페이지의 라벨 → 값 맵과 첨부파일 */
+async function fetchDetail(bizCyclId: string): Promise<{
+  pick: (...labels: string[]) => string | null;
+  overviewHtml: string;
+  attachments: RawAttachment[];
+}> {
+  const url = detailUrl(bizCyclId);
+  const response = await fetch(url, {
+    headers: { "User-Agent": USER_AGENT, Accept: "text/html" },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`egbiz 상세 요청 실패 (HTTP ${response.status}): ${url}`);
   }
-  return parsed.pathname.split("/").filter(Boolean).pop() ?? url;
-}
 
-async function fetchDetail(url: string): Promise<RawAnnouncement | null> {
-  const $ = cheerio.load(await fetchHtml(url));
+  const $ = cheerio.load(await response.text());
+  const fields = new Map<string, { text: string; html: string }>();
 
-  const title = normalizeWhitespace($(SELECTORS.detailTitle).first().text());
-  if (!title) return null;
-
-  const contentHtml = $(SELECTORS.detailContent).first().html() ?? "";
-  const content = normalizeWhitespace(stripHtml(contentHtml));
-
-  const attachments = $(SELECTORS.detailAttachment)
-    .toArray()
-    .map((element) => {
-      const $element = $(element);
-      const href = $element.attr("href");
-      if (!href) return null;
-      return {
-        fileName: normalizeWhitespace($element.text()) || "attachment",
-        fileUrl: absoluteUrl(href, url),
-      };
-    })
-    .filter((item): item is { fileName: string; fileUrl: string } =>
-      Boolean(item),
+  $("li").each((_, element) => {
+    const label = normalizeWhitespace(
+      $(element).find("> .conSec__con__title").first().text(),
     );
+    if (!label) return;
+    const $value = $(element).find("> .conSec__con__desc").first();
+    if ($value.length === 0) return;
+    fields.set(label, {
+      text: normalizeWhitespace($value.text()),
+      html: $value.html() ?? "",
+    });
+  });
+
+  const attachments: RawAttachment[] = [];
+  $('a[href*="fileDown"]').each((_, element) => {
+    const href = $(element).attr("href");
+    if (!href) return;
+    attachments.push({
+      fileName: normalizeWhitespace($(element).text()) || "attachment",
+      fileUrl: new URL(href, env.egbizBaseUrl()).toString(),
+    });
+  });
 
   return {
-    source: "EGBIZ",
-    externalId: externalIdFromUrl(url),
-    title,
-    // 본문이 비면 첨부파일 파서가 채워 넣는다
-    content: content || title,
-    url,
+    pick: (...labels: string[]) => {
+      for (const label of labels) {
+        const found = fields.get(label);
+        if (found?.text) return found.text;
+      }
+      return null;
+    },
+    overviewHtml:
+      fields.get("사업개요")?.html ?? fields.get("지원내용")?.html ?? "",
     attachments,
   };
 }
 
 export const egbizAdapter: AnnouncementSourceAdapter = {
   source: "EGBIZ",
-  label: "이지비즈(egbiz)",
+  label: "경기기업비서(egbiz)",
 
-  // 스크레이퍼는 API 키가 필요 없다. base URL 만 있으면 동작 시도는 가능.
+  // 공개 JSON 엔드포인트라 키가 필요 없다
   isConfigured: () => Boolean(env.egbizBaseUrl()),
 
   async fetchAnnouncements(options: FetchOptions = {}) {
+    const pageUnit = options.pageSize ?? 50;
     const maxPages = options.maxPages ?? 2;
-    const base = env.egbizBaseUrl();
     const collected: RawAnnouncement[] = [];
+    const seen = new Set<string>();
 
     for (let page = 1; page <= maxPages; page += 1) {
-      const listUrl = `${base}/board/announcement/list?page=${page}`;
-      const $ = cheerio.load(await fetchHtml(listUrl));
+      const rows = await fetchListPage(page, pageUnit);
+      if (rows.length === 0) break;
 
-      const detailUrls = $(SELECTORS.listItem)
-        .toArray()
-        .map((row) => $(row).find(SELECTORS.listLink).attr("href"))
-        .filter((href): href is string => Boolean(href))
-        .map((href) => absoluteUrl(href, listUrl));
+      for (const row of rows) {
+        const externalId = text(row.bizCyclId);
+        const title = text(row.bizNm);
+        if (!externalId || !title || seen.has(externalId)) continue;
+        seen.add(externalId);
 
-      if (detailUrls.length === 0) {
-        console.warn(
-          `[egbiz] 목록에서 항목을 찾지 못했습니다. 셀렉터를 확인하세요: ${listUrl}`,
-        );
-        break;
-      }
+        let body: string | null = null;
+        let targetAudience: string | null = null;
+        let attachments: RawAttachment[] = [];
 
-      for (const detailUrl of detailUrls) {
         await sleep(REQUEST_DELAY_MS);
         try {
-          const announcement = await fetchDetail(detailUrl);
-          if (announcement) collected.push(announcement);
+          const detail = await fetchDetail(externalId);
+          body =
+            normalizeWhitespace(stripHtml(detail.overviewHtml)) ||
+            detail.pick("사업개요", "지원내용");
+          targetAudience = detail.pick("신청자격", "지원대상", "신청대상");
+          attachments = detail.attachments;
         } catch (error) {
-          console.warn(`[egbiz] 상세 수집 실패: ${detailUrl}`, error);
+          // 상세 실패는 치명적이지 않다 — 목록 값만으로도 공고는 남긴다
+          console.warn(`[egbiz] 상세 수집 실패: ${externalId}`, error);
         }
+
+        // 본문이 비는 공고가 많아 목록 필드로라도 문맥을 채운다
+        const content =
+          body ||
+          normalizeWhitespace(
+            [
+              title,
+              text(row.categoryNm) && `분야: ${text(row.categoryNm)}`,
+              text(row.sareaSeCd) && `지원분야: ${text(row.sareaSeCd)}`,
+              text(row.outsdInstNm) && `수행기관: ${text(row.outsdInstNm)}`,
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          );
+
+        collected.push({
+          source: "EGBIZ",
+          externalId,
+          title,
+          content,
+          url: detailUrl(externalId),
+          category: text(row.categoryNm) ?? text(row.sareaSeCd),
+          region: extractRegion(title),
+          targetAudience,
+          agency: text(row.outsdInstNm),
+          startDate: parseKoreanDate(text(row.aplyBgngDt)),
+          endDate: parseKoreanDate(text(row.aplyEndDt)),
+          attachments,
+        });
       }
+
+      // 마지막 페이지
+      if (rows.length < pageUnit) break;
     }
 
-    // 접수기간은 상세 페이지 파싱 또는 첨부파일 추출 단계에서 채운다.
-    // 목록의 SELECTORS.listDate 를 쓰려면 detailUrls 수집 시 함께 매핑할 것.
+    if (collected.length === 0) {
+      console.warn(
+        "[egbiz] 수집 0건입니다. 목록 JSON 응답 형식이 바뀌었을 수 있습니다.",
+      );
+    }
+
     return collected;
   },
 };
