@@ -18,7 +18,11 @@ import { db } from "../src/db";
  *   pnpm ingest --source=K_STARTUP           # 특정 소스만
  *   pnpm ingest --source=EGBIZ --dry-run     # DB 에 쓰지 않고 파싱 결과만 확인
  *   pnpm ingest --max-pages=10               # 초기 적재 시 페이지 확대
+ *   pnpm ingest --source=BIZINFO --full      # 기존 공고를 만나도 멈추지 않고 백필
  *   pnpm ingest --embed-only                 # 수집 없이 미임베딩 공고만 처리
+ *
+ * 평소에는 이미 담아둔 공고를 만나는 지점에서 알아서 멈춘다(→ 1~2페이지).
+ * 목록 뒤쪽에 빠진 공고를 메울 때만 --full 을 쓴다.
  */
 function parseArgs(argv: string[]) {
   const flags = new Map<string, string>();
@@ -33,6 +37,7 @@ function parseArgs(argv: string[]) {
     embedOnly: flags.has("embed-only"),
     skipEmbedding: flags.has("skip-embedding"),
     skipAttachments: flags.has("skip-attachments"),
+    full: flags.has("full"),
     maxPages: flags.has("max-pages")
       ? Number(flags.get("max-pages"))
       : undefined,
@@ -52,6 +57,7 @@ async function main() {
     dryRun: options.dryRun,
     skipEmbedding: options.skipEmbedding,
     skipAttachments: options.skipAttachments,
+    full: options.full,
     maxPages: options.maxPages,
   };
 

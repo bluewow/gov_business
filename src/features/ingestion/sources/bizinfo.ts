@@ -35,6 +35,13 @@ const DETAIL_PATH = "/sii/siia/selectSIIA200Detail.do";
 /** 상세 요청 간격 — 공용 사이트이므로 과하게 두드리지 않는다 */
 const REQUEST_DELAY_MS = 350;
 
+/**
+ * 훑을 최대 페이지 수(페이지당 15건).
+ * 평소에는 `knownExternalIds` 덕에 1~2페이지에서 멈추므로 이 값은 사실상
+ * "첫 수집·백필의 깊이"다. 20페이지 = 300건 ≈ 3주치.
+ */
+const MAX_PAGES = 20;
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function fetchHtml(url: string): Promise<string> {
@@ -58,9 +65,15 @@ function detailUrl(pblancId: string): string {
   return `${env.bizinfoBaseUrl()}${DETAIL_PATH}?pblancId=${pblancId}`;
 }
 
-/** 목록 페이지에서 공고 ID 만 뽑는다. 나머지는 상세에서 읽는 편이 정확하다. */
-async function fetchPblancIds(page: number, rows: number): Promise<string[]> {
-  const url = `${env.bizinfoBaseUrl()}${LIST_PATH}?cpage=${page}&rows=${rows}`;
+/**
+ * 목록 페이지에서 공고 ID 만 뽑는다. 나머지는 상세에서 읽는 편이 정확하다.
+ *
+ * 페이지 크기는 사이트가 15건으로 고정한다 — `rows` · `pageUnit` ·
+ * `recordCountPerPage` · `pageSize` 어느 것을 넘겨도 15건만 온다(실측).
+ * 그래서 `FetchOptions.pageSize` 는 이 소스에서 의미가 없고 `cpage` 만 쓴다.
+ */
+async function fetchPblancIds(page: number): Promise<string[]> {
+  const url = `${env.bizinfoBaseUrl()}${LIST_PATH}?cpage=${page}`;
   const $ = cheerio.load(await fetchHtml(url));
 
   const ids = new Set<string>();
@@ -223,13 +236,13 @@ export const bizinfoAdapter: AnnouncementSourceAdapter = {
   isConfigured: () => Boolean(env.bizinfoBaseUrl()),
 
   async fetchAnnouncements(options: FetchOptions = {}) {
-    const rows = options.pageSize ?? 15;
-    const maxPages = options.maxPages ?? 2;
+    const maxPages = options.maxPages ?? MAX_PAGES;
+    const known = options.knownExternalIds;
     const collected: RawAnnouncement[] = [];
     const seen = new Set<string>();
 
     for (let page = 1; page <= maxPages; page += 1) {
-      const ids = await fetchPblancIds(page, rows);
+      const ids = await fetchPblancIds(page);
       if (ids.length === 0) {
         console.warn(
           `[bizinfo] 목록에서 공고 ID 를 찾지 못했습니다. 마크업이 바뀌었을 수 있습니다 (page=${page})`,
@@ -237,17 +250,29 @@ export const bizinfoAdapter: AnnouncementSourceAdapter = {
         break;
       }
 
+      let fresh = 0;
       for (const id of ids) {
         if (seen.has(id)) continue;
         seen.add(id);
+        if (!known?.has(id)) fresh += 1;
 
         await sleep(REQUEST_DELAY_MS);
         try {
+          // 아는 공고도 다시 읽는다 — 마감일·본문이 바뀌었을 수 있다
           const announcement = await fetchDetail(id);
           if (announcement) collected.push(announcement);
         } catch (error) {
           console.warn(`[bizinfo] 상세 수집 실패: ${id}`, error);
         }
+      }
+
+      // 목록이 등록일 내림차순이므로, 한 페이지가 통째로 아는 공고면
+      // 그 뒤도 전부 아는 공고다. 첫 수집(known 없음)은 이 조건에 걸리지 않는다.
+      if (known && known.size > 0 && fresh === 0) {
+        console.info(
+          `[bizinfo] ${page}페이지가 모두 기존 공고라 여기서 멈춥니다 (총 ${collected.length}건)`,
+        );
+        break;
       }
     }
 

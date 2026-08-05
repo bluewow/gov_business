@@ -52,6 +52,7 @@
 - **OPENAI_API_KEY 가 없으면 키워드 검색으로 폴백** — DB·UI 개발이 API 키 없이도 가능하다. AI 검토·작성은 키가 있어야 동작하며, 없으면 화면에 사유를 표시한다.
 - **인증 없음** — [current-user.ts](src/lib/current-user.ts) 가 데모 계정 하나를 공유한다. 로그인을 붙일 때 이 파일만 바꾸면 된다.
 - **수집은 수동 실행만** — 자동 스케줄러도, 이를 위한 HTTP 엔드포인트도 두지 않는다. 유료 API 가 모르는 사이에 도는 것을 막기 위한 의도적인 제약이다. 나중에 자동화가 필요해지면 `ingestAll()` 을 호출하는 진입점을 새로 만들되, 비용이 새지 않는지부터 확인할 것.
+- **수집 깊이는 "아는 공고를 만나면 멈춤"으로 자동 조절** — `ingestSource()` 가 해당 소스의 기존 `external_id` 를 모아 `FetchOptions.knownExternalIds` 로 넘긴다. 이건 **필터가 아니라 멈춤 신호**다: 목록이 최신순인 소스에서 한 페이지가 통째로 기존 공고면 그 뒤도 전부 기존 공고이므로 거기서 중단한다. 첫 수집(빈 집합)은 `maxPages` 까지 훑고, 이후 정기 수집은 1~2페이지에서 끝난다. 아는 공고도 결과에 담아 다시 upsert 하므로 마감일 변경 같은 갱신은 놓치지 않는다. 목록 뒤쪽에 빠진 공고를 메우려면 `--full`(멈춤 신호 해제). 현재 기업마당만 이 신호를 쓴다.
 
 ### 왜 Drizzle 인가 (Prisma → Drizzle 이전 기록)
 
@@ -151,25 +152,25 @@ web/
 
 ## Dev Commands
 
-| 명령어                 | 설명                                                   |
-| ---------------------- | ------------------------------------------------------ |
-| `pnpm db:up`           | Docker Postgres 기동 (healthy 될 때까지 대기)          |
-| `pnpm db:generate`     | 스키마 변경 → 마이그레이션 SQL 생성                    |
-| `pnpm db:migrate`      | 생성된 마이그레이션 적용                               |
-| `pnpm db:push`         | 마이그레이션 없이 스키마 직접 반영 (실험용)            |
-| `pnpm db:check`        | 마이그레이션 충돌 검사                                 |
-| `pnpm db:seed`         | 샘플 데이터 주입                                       |
-| `pnpm db:setup`        | up → migrate → seed 한 번에                            |
-| `pnpm db:down`         | 컨테이너 정지 (데이터 유지)                            |
-| `pnpm db:nuke`         | 볼륨까지 삭제 (데이터 소멸)                            |
-| `pnpm db:psql`         | 컨테이너 안 psql 접속                                  |
-| `pnpm db:studio`       | Drizzle Studio                                         |
-| `pnpm db:embed`        | 미임베딩 공고만 임베딩                                 |
-| `pnpm ingest`          | 공고 수집 (`--source=` / `--dry-run` / `--max-pages=`) |
-| `pnpm dev`             | 개발 서버 (Turbopack)                                  |
-| `pnpm build`           | 프로덕션 빌드                                          |
-| `pnpm typecheck`       | `tsc --noEmit`                                         |
-| `pnpm lint` / `format` | ESLint / Prettier                                      |
+| 명령어                 | 설명                                                              |
+| ---------------------- | ----------------------------------------------------------------- |
+| `pnpm db:up`           | Docker Postgres 기동 (healthy 될 때까지 대기)                     |
+| `pnpm db:generate`     | 스키마 변경 → 마이그레이션 SQL 생성                               |
+| `pnpm db:migrate`      | 생성된 마이그레이션 적용                                          |
+| `pnpm db:push`         | 마이그레이션 없이 스키마 직접 반영 (실험용)                       |
+| `pnpm db:check`        | 마이그레이션 충돌 검사                                            |
+| `pnpm db:seed`         | 샘플 데이터 주입                                                  |
+| `pnpm db:setup`        | up → migrate → seed 한 번에                                       |
+| `pnpm db:down`         | 컨테이너 정지 (데이터 유지)                                       |
+| `pnpm db:nuke`         | 볼륨까지 삭제 (데이터 소멸)                                       |
+| `pnpm db:psql`         | 컨테이너 안 psql 접속                                             |
+| `pnpm db:studio`       | Drizzle Studio                                                    |
+| `pnpm db:embed`        | 미임베딩 공고만 임베딩                                            |
+| `pnpm ingest`          | 공고 수집 (`--source=` / `--dry-run` / `--max-pages=` / `--full`) |
+| `pnpm dev`             | 개발 서버 (Turbopack)                                             |
+| `pnpm build`           | 프로덕션 빌드                                                     |
+| `pnpm typecheck`       | `tsc --noEmit`                                                    |
+| `pnpm lint` / `format` | ESLint / Prettier                                                 |
 
 **최초 세팅**: `pnpm db:setup` → `pnpm dev`
 
@@ -318,6 +319,7 @@ STEP 2 「수집 현황」의 **API 키** 패널이 입력을 받고, sessionSto
 - **첨부파일 파서** — `attachment-parser.ts` 에 plain-text 파서만 등록돼 있다. HWPX(zip+XML) → PDF → HWP 순으로 붙이는 것을 권장. `registerParser()` 로 등록만 하면 파이프라인이 자동으로 사용한다.
 - **egbiz 셀렉터** — `sources/egbiz.ts` 의 `SELECTORS` 와 목록 URL 은 아직 자리표시자다. 상세 URL 형식은 `egbiz.or.kr/sp/supportPrjDtl.do?bizCyclId=PD...` 로 확인했고 서버 렌더도 되지만, egbiz 공고 상당수가 기업마당에도 올라오므로 우선순위를 낮춰 두었다. 수집 전 robots.txt / 이용약관 확인.
 - **기업마당 마크업 의존** — `sources/bizinfo.ts` 는 스크레이퍼라 마크업이 바뀌면 조용히 0건이 된다. 라벨(`span.s_title`) → 값(`div.txt`) 매핑이라 항목 순서 변경에는 강하지만, 지원분야는 제목 위 `div.category` 배지에서 읽으므로 이쪽이 바뀌면 `category` 가 비게 된다. 수집 0건이면 `ingestion_runs` 로 감지할 것. 공식 오픈 API(기업마당 발급 `crtfcKey`, data.go.kr 키와 다름)로 갈아탈 여지도 있다.
+- **기업마당 페이지 크기는 15건 고정** — `rows` · `pageUnit` · `recordCountPerPage` · `pageSize` 어느 것을 넘겨도 15건만 온다(실측). `cpage` 만 동작하므로 `FetchOptions.pageSize` 는 이 소스에서 무시된다. 수집량은 `maxPages`(기본 20 = 300건)로만 조절한다.
 - **인증** — `users` 테이블만 있고 로그인은 없다. 모든 화면이 데모 계정 하나를 공유한다.
 - **사업 프로필 다중 등록** — 스키마는 여러 건을 지원하지만 UI 는 가장 최근 1건만 다룬다.
 - **추천 결과 캐시** — 매 조회마다 다시 계산한다. 반복 조회가 잦아지면 테이블에 캐싱할 것.

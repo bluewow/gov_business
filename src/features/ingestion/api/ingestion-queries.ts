@@ -10,7 +10,11 @@ import {
 
 import { isAiEnabled } from "@/lib/env";
 
-import { adapters, embeddingTargetCondition } from "../ingest";
+import {
+  adapters,
+  embeddingTargetCondition,
+  isEmbeddingRunning,
+} from "../ingest";
 
 export interface SourceStatus {
   source: AnnouncementSource;
@@ -78,13 +82,15 @@ export interface EmbeddingStatus {
   total: number;
   /** 마감·샘플이라 임베딩 대상에서 뺀 건수 (비용 절약분) */
   excluded: number;
+  /** 지금 백그라운드에서 임베딩이 돌고 있는지 */
+  running: boolean;
   embedded: number;
   pending: number;
   attachmentsPending: number;
 }
 
 export async function getEmbeddingStatus(): Promise<EmbeddingStatus> {
-  const [[totals], [attachments]] = await Promise.all([
+  const [[totals], [attachments], running] = await Promise.all([
     db
       .select({
         total: count(),
@@ -100,6 +106,7 @@ export async function getEmbeddingStatus(): Promise<EmbeddingStatus> {
       .select({ total: count() })
       .from(announcementAttachments)
       .where(eq(announcementAttachments.parseStatus, "PENDING")),
+    isEmbeddingRunning(),
   ]);
 
   return {
@@ -108,6 +115,7 @@ export async function getEmbeddingStatus(): Promise<EmbeddingStatus> {
     embedded: totals?.embedded ?? 0,
     pending: totals?.pending ?? 0,
     excluded: totals?.excluded ?? 0,
+    running,
     attachmentsPending: attachments?.total ?? 0,
   };
 }

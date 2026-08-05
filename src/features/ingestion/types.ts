@@ -26,10 +26,20 @@ export interface RawAttachment {
 }
 
 export interface FetchOptions {
-  /** 한 페이지당 건수 */
+  /** 한 페이지당 건수. 원본이 페이지 크기를 고정한 소스에서는 무시된다 */
   pageSize?: number;
   /** 최대 페이지 수 — 초기 적재 시에만 크게 잡는다 */
   maxPages?: number;
+  /**
+   * 이미 DB 에 있는 공고의 externalId 집합.
+   *
+   * **필터가 아니라 "멈춤 신호"다.** 목록이 최신순인 소스에서, 한 페이지가 전부 아는
+   * 공고면 그 뒤로도 전부 아는 공고이므로 더 거슬러 올라가지 않는다. 첫 수집(빈 집합)은
+   * 끝까지 훑고, 이후 정기 수집은 새 공고가 끊기는 지점에서 멈춘다.
+   *
+   * 아는 공고도 결과에는 그대로 담는다 — 마감일 변경 같은 갱신을 놓치지 않기 위함이다.
+   */
+  knownExternalIds?: ReadonlySet<string>;
 }
 
 /**

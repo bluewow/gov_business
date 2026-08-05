@@ -41,6 +41,26 @@ export interface IngestOptions extends FetchOptions {
   skipAttachments?: boolean;
   /** 임베딩 생성을 건너뛴다 */
   skipEmbedding?: boolean;
+  /**
+   * 기존 공고를 만나도 멈추지 않고 `maxPages` 까지 끝까지 훑는다.
+   * 목록 뒤쪽에 빠진 공고를 메우는 백필용 — 평소에는 쓰지 않는다.
+   */
+  full?: boolean;
+}
+
+/**
+ * 이 소스로 이미 담아둔 공고의 externalId.
+ * 어댑터에 "여기서부터는 아는 공고" 라고 알려주는 용도라 id 만 읽는다.
+ */
+async function loadKnownExternalIds(
+  source: AnnouncementSource,
+): Promise<Set<string>> {
+  const rows = await db
+    .select({ externalId: announcements.externalId })
+    .from(announcements)
+    .where(eq(announcements.source, source));
+
+  return new Set(rows.map((row) => row.externalId));
 }
 
 /**
@@ -52,6 +72,44 @@ export interface IngestOptions extends FetchOptions {
  */
 const INGEST_LOCK_KEY = 811_001;
 const EMBED_LOCK_KEY = 811_002;
+
+/**
+ * 잠금을 잡고 해제 함수를 돌려준다. 실패하면 null.
+ * 백그라운드 임베딩처럼 "요청이 끝난 뒤에도 계속 도는" 작업에 쓴다 —
+ * 응답 전에 잠가 두어야 화면이 곧바로 「진행 중」을 볼 수 있다.
+ */
+export async function acquireEmbeddingLock(): Promise<{
+  release: () => Promise<void>;
+} | null> {
+  const client = await db.$client.connect();
+  const { rows } = await client.query<{ locked: boolean }>(
+    "SELECT pg_try_advisory_lock($1) AS locked",
+    [EMBED_LOCK_KEY],
+  );
+
+  if (!rows[0]?.locked) {
+    client.release();
+    return null;
+  }
+
+  return {
+    release: async () => {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [EMBED_LOCK_KEY]);
+      } finally {
+        client.release();
+      }
+    },
+  };
+}
+
+/** 임베딩이 지금 돌고 있는지 (잠금 점유 여부로 판단) */
+export async function isEmbeddingRunning(): Promise<boolean> {
+  const lock = await acquireEmbeddingLock();
+  if (!lock) return true;
+  await lock.release();
+  return false;
+}
 
 async function withAdvisoryLock<T>(
   key: number,
@@ -260,6 +318,10 @@ export async function embedPendingAnnouncements(limit = 200): Promise<number> {
   return withAdvisoryLock(EMBED_LOCK_KEY, () => embedPendingInner(limit), 0);
 }
 
+export async function embedPendingWithoutLock(limit: number): Promise<number> {
+  return embedPendingInner(limit);
+}
+
 async function embedPendingInner(limit: number): Promise<number> {
   const candidates = await db
     .select({
@@ -386,7 +448,15 @@ async function ingestSourceInner(
       )[0];
 
   try {
-    const raws = await adapter.fetchAnnouncements(options);
+    // --full 은 멈춤 신호를 끄고 maxPages 까지 훑는다 (백필)
+    const knownExternalIds = options.full
+      ? undefined
+      : await loadKnownExternalIds(adapter.source);
+
+    const raws = await adapter.fetchAnnouncements({
+      ...options,
+      knownExternalIds,
+    });
     result.fetched = raws.length;
 
     if (options.dryRun) {

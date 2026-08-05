@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -65,12 +65,21 @@ export function IngestionPanel({
       setEmbedMessage(
         result.error
           ? `임베딩 실패: ${result.error}`
-          : `임베딩 ${result.embedded}건 생성했습니다.`,
+          : "백그라운드에서 임베딩을 시작했습니다. 페이지를 옮기거나 창을 닫아도 계속 진행됩니다.",
       );
       setRunning(null);
+      // 잠금이 이미 잡혀 있으므로 곧바로 새로고침하면 화면이 「진행 중」을 본다
       router.refresh();
     });
   }
+
+  // 진행 중이면 주기적으로 새로고침해 진행률을 갱신한다.
+  // 서버가 잠금 해제를 보고 running=false 를 주면 이 효과가 정리되며 폴링도 멈춘다.
+  useEffect(() => {
+    if (!embedding.running) return;
+    const timer = setInterval(() => router.refresh(), 3000);
+    return () => clearInterval(timer);
+  }, [embedding.running, router]);
 
   // 서버 .env 든 이 탭에 넣은 키든 하나라도 있으면 임베딩을 돌릴 수 있다
   const canEmbed = embedding.aiEnabled || Boolean(keys.openai);
@@ -148,6 +157,11 @@ export function IngestionPanel({
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">
                 {embedding.embedded} / {embedding.total}건 임베딩 완료
+                {embedding.running ? (
+                  <span className="text-foreground ml-2">
+                    · 진행 중 (남은 {embedding.pending}건)
+                  </span>
+                ) : null}
               </span>
               <span className="font-medium">{embeddedRatio}%</span>
             </div>
@@ -179,12 +193,19 @@ export function IngestionPanel({
               variant="outline"
               size="sm"
               className="self-start"
-              disabled={isPending || embedding.pending === 0 || !canEmbed}
+              disabled={
+                isPending ||
+                embedding.running ||
+                embedding.pending === 0 ||
+                !canEmbed
+              }
               onClick={embed}
             >
-              {running === "EMBED"
-                ? "임베딩 중…"
-                : `미임베딩 ${embedding.pending}건 처리`}
+              {embedding.running
+                ? "임베딩 진행 중…"
+                : running === "EMBED"
+                  ? "시작하는 중…"
+                  : `미임베딩 ${embedding.pending}건 처리`}
             </Button>
           </CardContent>
         </Card>
