@@ -10,7 +10,7 @@ import {
 
 import { isAiEnabled } from "@/lib/env";
 
-import { adapters } from "../ingest";
+import { adapters, embeddingTargetCondition } from "../ingest";
 
 export interface SourceStatus {
   source: AnnouncementSource;
@@ -76,6 +76,8 @@ export interface EmbeddingStatus {
   /** 서버 .env 에 OpenAI 키가 있는지 (브라우저 입력 키는 클라이언트가 따로 본다) */
   aiEnabled: boolean;
   total: number;
+  /** 마감·샘플이라 임베딩 대상에서 뺀 건수 (비용 절약분) */
+  excluded: number;
   embedded: number;
   pending: number;
   attachmentsPending: number;
@@ -88,7 +90,10 @@ export async function getEmbeddingStatus(): Promise<EmbeddingStatus> {
         total: count(),
         embedded: sql<number>`count(*) FILTER (WHERE ${announcements.embedding} IS NOT NULL)::int`,
         // 임베딩 대기 = 해시가 비어 있는 것 (본문이 바뀌면 해시를 비운다)
-        pending: sql<number>`count(*) FILTER (WHERE ${isNull(announcements.embeddingHash)})::int`,
+        // ingest.ts 의 embeddingTargetCondition() 을 그대로 써서 화면 숫자와 실제 처리량을 맞춘다
+        pending: sql<number>`count(*) FILTER (WHERE ${embeddingTargetCondition()})::int`,
+        // 마감·샘플이라 일부러 제외한 건수 — 화면에서 "왜 121이 아니지"를 설명한다
+        excluded: sql<number>`count(*) FILTER (WHERE ${isNull(announcements.embeddingHash)} AND NOT (${embeddingTargetCondition()}))::int`,
       })
       .from(announcements),
     db
@@ -102,6 +107,7 @@ export async function getEmbeddingStatus(): Promise<EmbeddingStatus> {
     total: totals?.total ?? 0,
     embedded: totals?.embedded ?? 0,
     pending: totals?.pending ?? 0,
+    excluded: totals?.excluded ?? 0,
     attachmentsPending: attachments?.total ?? 0,
   };
 }

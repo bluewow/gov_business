@@ -308,6 +308,45 @@ export const applicationDrafts = pgTable(
   ],
 );
 
+/**
+ * LLM 정밀 평가 결과 캐시.
+ *
+ * 같은 사업 × 같은 공고를 다시 평가하면 같은 답이 나오는데 매번 호출하면 비용만 나간다.
+ * 사업 설명이나 공고 내용이 실제로 바뀌었을 때만 다시 부르도록,
+ * 평가 당시의 임베딩 해시를 함께 저장해 두고 값이 다르면 캐시를 무시한다.
+ */
+export const llmEvaluations = pgTable(
+  "llm_evaluations",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userBusinessId: uuid()
+      .notNull()
+      .references(() => userBusinesses.id, { onDelete: "cascade" }),
+    announcementId: uuid()
+      .notNull()
+      .references(() => announcements.id, { onDelete: "cascade" }),
+
+    /** 적합도 0~100 */
+    score: integer().notNull(),
+    /** 추천 이유 2줄 요약 */
+    reason: text().notNull(),
+
+    /** 평가 시점의 원문 해시 — 하나라도 다르면 캐시 무효 */
+    businessHash: text().notNull(),
+    announcementHash: text().notNull(),
+    /** 사용한 모델 — 모델을 바꾸면 캐시를 새로 채운다 */
+    model: text().notNull(),
+
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("llm_evaluations_business_announcement_key").on(
+      table.userBusinessId,
+      table.announcementId,
+    ),
+  ],
+);
+
 /** 수집 배치 실행 기록 (cron 관측용) */
 export const ingestionRuns = pgTable(
   "ingestion_runs",
@@ -405,6 +444,17 @@ export const applicationEligibilityChecksRelations = relations(
   }),
 );
 
+export const llmEvaluationsRelations = relations(llmEvaluations, ({ one }) => ({
+  userBusiness: one(userBusinesses, {
+    fields: [llmEvaluations.userBusinessId],
+    references: [userBusinesses.id],
+  }),
+  announcement: one(announcements, {
+    fields: [llmEvaluations.announcementId],
+    references: [announcements.id],
+  }),
+}));
+
 export const applicationDraftsRelations = relations(
   applicationDrafts,
   ({ one }) => ({
@@ -426,3 +476,4 @@ export type Application = typeof applications.$inferSelect;
 export type ApplicationReview = typeof applicationReviews.$inferSelect;
 export type ApplicationDraft = typeof applicationDrafts.$inferSelect;
 export type IngestionRun = typeof ingestionRuns.$inferSelect;
+export type LlmEvaluation = typeof llmEvaluations.$inferSelect;

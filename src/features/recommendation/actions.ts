@@ -2,10 +2,15 @@
 
 import { getPrimaryBusiness } from "@/lib/current-user";
 import { createEmbedding } from "@/lib/embedding";
-import { isAiEnabled } from "@/lib/env";
+import { env, isAiEnabled } from "@/lib/env";
 import { withRuntimeKeys, type RuntimeKeys } from "@/lib/runtime-keys";
 
 import { keywordSearchAnnouncements } from "./api/keyword-search";
+import {
+  businessHashOf,
+  getCachedEvaluations,
+  saveEvaluations,
+} from "./api/evaluation-cache";
 import { evaluateAnnouncements } from "./api/llm-evaluator";
 import {
   matchAnnouncements,
@@ -111,10 +116,35 @@ async function recommendInner(
       };
     }
 
-    const evaluations = await evaluateAnnouncements(
-      business.description,
-      matches.slice(0, LLM_EVALUATION_TOP_N),
-    );
+    // 상위 N 건만 LLM 에 물어보되, 이미 평가한 조합은 캐시에서 꺼낸다.
+    // (키워드만 바꿔 재검색하는 패턴이 잦아 캐시가 없으면 같은 값을 반복 결제하게 된다)
+    const targets = matches.slice(0, LLM_EVALUATION_TOP_N);
+    const model = env.evaluationModel();
+    const businessHash = businessHashOf(business.description);
+
+    const cached = await getCachedEvaluations({
+      userBusinessId: business.id,
+      businessHash,
+      model,
+      announcements: targets,
+    });
+
+    const misses = targets.filter((item) => !cached.has(item.id));
+    const fresh = await evaluateAnnouncements(business.description, misses);
+
+    await saveEvaluations({
+      userBusinessId: business.id,
+      businessHash,
+      model,
+      entries: misses
+        .map((announcement) => {
+          const evaluation = fresh.get(announcement.id);
+          return evaluation ? { announcement, evaluation } : null;
+        })
+        .filter((entry) => entry !== null),
+    });
+
+    const evaluations = new Map([...cached, ...fresh]);
 
     const items = matches
       .map((match) => {

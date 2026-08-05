@@ -55,6 +55,7 @@ const selection = {
   startDate: announcements.startDate,
   endDate: announcements.endDate,
   isSample: announcements.isSample,
+  embeddingHash: announcements.embeddingHash,
 };
 
 /**

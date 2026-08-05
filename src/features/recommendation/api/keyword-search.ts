@@ -58,6 +58,7 @@ export async function keywordSearchAnnouncements(
       startDate: announcements.startDate,
       endDate: announcements.endDate,
       isSample: announcements.isSample,
+      embeddingHash: announcements.embeddingHash,
     })
     .from(announcements)
     .where(conditions.length > 0 ? and(...conditions) : undefined)

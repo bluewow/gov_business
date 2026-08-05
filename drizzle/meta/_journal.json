@@ -15,6 +15,13 @@
       "when": 1785892962273,
       "tag": "0001_thick_warstar",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785898527705,
+      "tag": "0002_panoramic_thor",
+      "breakpoints": true
     }
   ]
 }

@@ -155,6 +155,13 @@ export function IngestionPanel({
             <p className="text-muted-foreground text-xs leading-5">
               임베딩되지 않은 공고는 의미 기반 추천 대상에서 빠집니다. 첨부파일
               파싱 대기 {embedding.attachmentsPending}건.
+              {embedding.excluded > 0 ? (
+                <>
+                  {" "}
+                  마감·샘플 {embedding.excluded}건은 추천에 쓰이지 않아 비용
+                  절약을 위해 대상에서 제외했습니다.
+                </>
+              ) : null}
             </p>
             {!canEmbed ? (
               <p className="text-destructive border-destructive/30 bg-destructive/5 rounded-lg border p-3 text-xs leading-5">

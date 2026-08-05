@@ -33,6 +33,8 @@ export interface MatchedAnnouncement {
   endDate: Date | null;
   /** seed 로 넣은 개발용 가짜 공고 */
   isSample: boolean;
+  /** LLM 평가 캐시 무효화 판단용 (임베딩 전이면 null) */
+  embeddingHash: string | null;
   /** 코사인 유사도 0~1 */
   similarity: number;
   /** 요청한 키워드 중 실제로 이 공고에서 걸린 것 */
