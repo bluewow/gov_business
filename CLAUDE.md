@@ -51,6 +51,7 @@
 - **1차 필터는 지역/분야 대신 키워드** — 사용자가 키워드 몇 개를 넣어 결과를 보며 좁혀 가는 방식이다. 키워드는 제목·요약·본문·분야·지역·지원대상·기관을 한꺼번에 부분일치로 훑으므로 「경기」·「창업」을 넣으면 예전 지역/분야 필터와 같게 동작한다. 정규화·추출 헬퍼는 [keywords.ts](src/features/recommendation/keywords.ts)(순수 함수 — 클라이언트에서도 import 가능), SQL 조건과 순위 보정은 [api/keyword-filter.ts](src/features/recommendation/api/keyword-filter.ts) 에 있다.
 - **OPENAI_API_KEY 가 없으면 키워드 검색으로 폴백** — DB·UI 개발이 API 키 없이도 가능하다. AI 검토·작성은 키가 있어야 동작하며, 없으면 화면에 사유를 표시한다.
 - **인증 없음** — [current-user.ts](src/lib/current-user.ts) 가 데모 계정 하나를 공유한다. 로그인을 붙일 때 이 파일만 바꾸면 된다.
+- **수집은 수동 실행만** — 자동 스케줄러도, 이를 위한 HTTP 엔드포인트도 두지 않는다. 유료 API 가 모르는 사이에 도는 것을 막기 위한 의도적인 제약이다. 나중에 자동화가 필요해지면 `ingestAll()` 을 호출하는 진입점을 새로 만들되, 비용이 새지 않는지부터 확인할 것.
 
 ### 왜 Drizzle 인가 (Prisma → Drizzle 이전 기록)
 
@@ -104,7 +105,6 @@ web/
 │   │   ├── announcements/       # STEP 2 공고 목록
 │   │   ├── recommendations/     # STEP 3 큐레이션
 │   │   ├── applications/[id]/   # STEP 4 AI 검토 · 초안 작성
-│   │   └── api/cron/ingest/     # 수집 배치 엔드포인트
 │   ├── components/layout/       # AppSidebar, PageShell, nav-items
 │   ├── features/
 │   │   ├── business/            # 사업 프로필 저장 + 임베딩
@@ -132,7 +132,8 @@ web/
 | `application_reviews`            | AI 요건 검토 1건 (다시 돌리면 덮어씀)                      |
 | `application_eligibility_checks` | 자격요건 항목별 판정 (MET/UNMET/UNKNOWN)                   |
 | `application_drafts`             | 사업계획서 섹션별 초안 (AI 생성 + 사용자 편집)             |
-| `ingestion_runs`                 | 수집 배치 실행 기록 — 실패·0건 수집 감지용                 |
+| `ingestion_runs`                 | 수집 실행 기록 — 실패·0건 수집을 화면에서 확인             |
+| `llm_evaluations`                | LLM 정밀 평가 캐시 — 같은 조합 재호출을 막는다             |
 
 - `embedding`(1536d)은 `user_businesses` / `announcements` 두 곳에 있다.
 - `embedding_hash` 는 임베딩 원문의 SHA-256 — 값이 같으면 재임베딩을 건너뛴다(비용 절감).
@@ -277,14 +278,14 @@ ESM 은 import 를 모듈 본문보다 먼저 평가한다. 스크립트 본문�
 | `OPENAI_EVAL_MODEL`      |      | 기본 `gpt-4o-mini`                                            |
 | `DATA_GO_KR_SERVICE_KEY` |      | 없으면 K-Startup 수집을 건너뛴다                              |
 | `BIZINFO_BASE_URL`       |      | 기업마당 호스트. 키 불필요 (기본 `https://www.bizinfo.go.kr`) |
-| `CRON_SECRET`            |      | 설정 시 `/api/cron/ingest` 에 Bearer 인증 요구                |
+| ~~`CRON_SECRET`~~        |      | 미사용 — 자동 수집 엔드포인트를 제거해 더 이상 읽지 않는다    |
 
 ### 브라우저에서 넣는 휘발성 API 키
 
 `OPENAI_API_KEY` 와 `DATA_GO_KR_SERVICE_KEY` 는 `.env` 에 두지 않고 화면에서 넣을 수 있다.
 STEP 2 「수집 현황」의 **API 키** 패널이 입력을 받고, sessionStorage 에만 보관한다(탭 닫으면 소멸).
 
-읽는 우선순위는 **요청에 실린 키 > `.env`** 다. 그래서 화면에 안 넣어도 cron 은 `.env` 로 계속 돈다.
+읽는 우선순위는 **요청에 실린 키 > `.env`** 다. 화면에 안 넣어도 CLI(`pnpm ingest`)는 `.env` 로 동작한다.
 
 ```
 브라우저 (sessionStorage)           서버

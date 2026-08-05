@@ -10,7 +10,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * 저장 정책:
  *  - 서버는 이 값을 DB·파일·로그 어디에도 쓰지 않는다. 요청이 끝나면 사라진다.
  *  - 브라우저는 sessionStorage 에만 둔다(탭을 닫으면 소멸). src/stores/api-keys-store.ts 참고.
- *  - 키가 없으면 .env 값으로 자동 폴백한다 — cron 처럼 사람이 없는 경로가 계속 동작해야 하므로.
+ *  - 키가 없으면 .env 값으로 자동 폴백한다 — CLI(`pnpm ingest`) 처럼 화면이 없는 경로를 위해서다.
  */
 export interface RuntimeKeys {
   /** 공공데이터포털 서비스키 (K-Startup 등) */

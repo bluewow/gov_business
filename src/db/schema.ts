@@ -347,7 +347,7 @@ export const llmEvaluations = pgTable(
   ],
 );
 
-/** 수집 배치 실행 기록 (cron 관측용) */
+/** 수집 실행 기록 — 실패·0건 수집을 화면에서 확인하기 위한 것 */
 export const ingestionRuns = pgTable(
   "ingestion_runs",
   {

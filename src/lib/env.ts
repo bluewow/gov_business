@@ -7,7 +7,7 @@ import { runtimeKey } from "@/lib/runtime-keys";
  * 빌드/렌더 단계에서 키가 없다는 이유로 앱 전체가 죽는 것을 막기 위함.
  *
  * API 키는 "브라우저에서 넘어온 휘발성 키 > .env" 순으로 읽는다.
- * 화면에서 키를 넣으면 그 요청에만 쓰이고, 안 넣으면 .env 로 폴백해 cron 이 계속 돈다.
+ * 화면에서 키를 넣으면 그 요청에만 쓰이고, 안 넣으면 .env 로 폴백한다.
  */
 
 function read(key: string): string | undefined {
@@ -58,8 +58,6 @@ export const env = {
   bizinfoBaseUrl: () => read("BIZINFO_BASE_URL") ?? "https://www.bizinfo.go.kr",
 
   egbizBaseUrl: () => read("EGBIZ_BASE_URL") ?? "https://www.egbiz.or.kr",
-
-  cronSecret: () => read("CRON_SECRET"),
 } as const;
 
 /** OpenAI 키가 있어야만 돌아가는 경로에서 사전 분기용 */

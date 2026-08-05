@@ -63,9 +63,12 @@ export default async function ApiKeysPage() {
         </div>
 
         <p className="text-muted-foreground text-xs leading-5">
-          정기 수집(
-          <code className="bg-muted rounded px-1 py-0.5">/api/cron/ingest</code>
-          )처럼 사람이 없는 실행에는 이 입력이 닿지 않습니다. 그 경로까지 쓰려면
+          터미널 실행(
+          <code className="bg-muted rounded px-1 py-0.5">
+            pnpm ingest
+          </code>,{" "}
+          <code className="bg-muted rounded px-1 py-0.5">pnpm db:embed</code>
+          )에는 이 입력이 닿지 않습니다. 그쪽까지 쓰려면
           <code className="bg-muted mx-1 rounded px-1 py-0.5">.env.local</code>
           에도 키를 넣어 두세요. 읽는 순서는{" "}
           <strong>화면 입력 키 → .env</strong> 입니다.

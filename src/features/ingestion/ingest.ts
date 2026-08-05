@@ -44,7 +44,7 @@ export interface IngestOptions extends FetchOptions {
 }
 
 /**
- * 같은 작업이 동시에 두 번 도는 것을 막는다 (cron 과 화면 버튼이 겹치는 경우).
+ * 같은 작업이 동시에 두 번 도는 것을 막는다 (화면 버튼 연타, CLI 와 화면이 겹치는 경우).
  * 결과 자체는 upsert 라 안전하지만, 유료 API 를 두 번 호출하는 게 문제다.
  *
  * 세션 단위 advisory lock 이라 풀에서 전용 커넥션을 하나 잡아 쓴다.

@@ -35,11 +35,16 @@ export default async function IngestionPage() {
       description={
         <>
           K-Startup API 와 기업마당·이지비즈 스크레이퍼로 공고를 모으고,
-          첨부파일 텍스트를 추출한 뒤 임베딩까지 만듭니다. 정기 실행은{" "}
+          첨부파일 텍스트를 추출한 뒤 임베딩까지 만듭니다.{" "}
+          <strong className="text-foreground">
+            수집은 수동으로만 실행됩니다
+          </strong>{" "}
+          — 자동으로 도는 스케줄러가 없으므로 아래 버튼을 눌러야 공고가
+          들어옵니다. (터미널에서는{" "}
           <code className="bg-muted rounded px-1.5 py-0.5 text-xs">
-            /api/cron/ingest
-          </code>{" "}
-          엔드포인트를 스케줄러에 걸어 두세요.
+            pnpm ingest
+          </code>
+          )
         </>
       }
       actions={
