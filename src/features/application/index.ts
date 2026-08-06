@@ -1,4 +1,5 @@
 export {
+  extractApplicationAttachments,
   generateAllDrafts,
   generateDraft,
   removeApplication,
@@ -18,6 +19,7 @@ export type {
 } from "./api/application-queries";
 export { ApplicationList } from "./components/application-list";
 export { ApplicationStatusControl } from "./components/application-status-control";
+export { AttachmentPanel } from "./components/attachment-panel";
 export { DraftEditor } from "./components/draft-editor";
 export { ReviewPanel } from "./components/review-panel";
 export { SaveApplicationButton } from "./components/save-application-button";

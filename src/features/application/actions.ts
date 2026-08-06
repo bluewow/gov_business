@@ -16,7 +16,12 @@ import {
 import { getPrimaryBusiness } from "@/lib/current-user";
 import { isAiEnabled } from "@/lib/env";
 
-import { getApplicationDetail } from "./api/application-queries";
+import { extractAttachmentsForAnnouncement } from "@/features/ingestion";
+
+import {
+  getApplicationDetail,
+  type ApplicationDetail,
+} from "./api/application-queries";
 import { reviewApplication } from "./api/reviewer";
 import { writeDraftSection } from "./api/writer";
 import { DRAFT_SECTIONS, getSection } from "./sections";
@@ -32,6 +37,13 @@ function revalidateApplication(id?: string) {
   revalidatePath("/announcements");
   revalidatePath("/");
   if (id) revalidatePath(`/applications/${id}`);
+}
+
+/** 추출이 끝난 첨부 본문만 모은다 — AI 검토·초안의 1차 근거가 된다 */
+function extractedTexts(application: ApplicationDetail): string[] {
+  return application.announcement.attachments
+    .filter((item) => item.parseStatus === "PARSED" && item.extractedText)
+    .map((item) => `[첨부: ${item.fileName}]\n${item.extractedText}`);
 }
 
 function toMessage(error: unknown): string {
@@ -133,6 +145,7 @@ async function runReviewInner(applicationId: string): Promise<ActionResult> {
         region: application.announcement.region,
         targetAudience: application.announcement.targetAudience,
         endDate: application.announcement.endDate,
+        attachmentTexts: extractedTexts(application),
       },
     });
 
@@ -226,6 +239,7 @@ async function generateDraftInner(
         content: application.announcement.content,
         agency: application.announcement.agency,
         targetAudience: application.announcement.targetAudience,
+        attachmentTexts: extractedTexts(application),
       },
       reviewHints: application.review
         ? {
@@ -317,4 +331,45 @@ async function generateAllDraftsInner(
     generated += 1;
   }
   return { ok: true, generated };
+}
+
+/**
+ * STEP 4-0: 이 공고의 첨부파일만 내려받아 텍스트를 추출한다.
+ *
+ * 전체 공고를 일괄 처리하지 않는 이유는 파일 하나가 수백 KB 라서다 —
+ * 700건이면 수백 MB 를 정부 서버에서 받아야 하고, 실제로 지원할 공고는 극소수다.
+ * 그래서 사용자가 이 화면에서 요청할 때만 그 공고 것만 받는다.
+ *
+ * 추출한 본문은 AI 요건 검토·초안 작성의 근거로 들어가고,
+ * 공고 임베딩도 재생성 대상이 된다(본문이 늘었으므로).
+ */
+export async function extractApplicationAttachments(
+  applicationId: string,
+): Promise<ActionResult & { parsed?: number; total?: number }> {
+  try {
+    const application = await getApplicationDetail(applicationId);
+    if (!application) return { ok: false, error: "지원서를 찾을 수 없습니다." };
+
+    const result = await extractAttachmentsForAnnouncement(
+      application.announcementId,
+    );
+
+    revalidateApplication(applicationId);
+
+    if (result.total === 0) {
+      return { ok: false, error: "이 공고에는 첨부파일이 없습니다." };
+    }
+    if (result.parsed === 0) {
+      return {
+        ok: false,
+        error: `첨부 ${result.total}건을 모두 읽지 못했습니다 (미지원 ${result.unsupported} · 실패 ${result.failed}). 구형 .hwp 는 아직 지원하지 않습니다.`,
+        parsed: 0,
+        total: result.total,
+      };
+    }
+
+    return { ok: true, parsed: result.parsed, total: result.total };
+  } catch (error) {
+    return { ok: false, error: toMessage(error) };
+  }
 }

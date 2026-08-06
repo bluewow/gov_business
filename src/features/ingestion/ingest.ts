@@ -256,34 +256,89 @@ export async function parsePendingAttachments(limit = 50): Promise<number> {
 
   let parsed = 0;
   for (const attachment of pending) {
-    const result = await parseAttachment({
-      fileName: attachment.fileName,
-      fileUrl: attachment.fileUrl,
-      mimeType: attachment.mimeType,
-    });
+    if (await parseAndStore(attachment)) parsed += 1;
+  }
+  return parsed;
+}
 
-    await db
-      .update(announcementAttachments)
-      .set({
-        parseStatus: result.status,
-        extractedText: result.text
-          ? truncate(normalizeWhitespace(result.text), 50_000)
-          : null,
-        parseError: result.error ?? null,
-      })
-      .where(eq(announcementAttachments.id, attachment.id));
+export interface AttachmentExtractionResult {
+  total: number;
+  parsed: number;
+  failed: number;
+  unsupported: number;
+}
 
-    if (result.status === "PARSED") {
-      parsed += 1;
-      // 본문이 바뀌었으니 다음 임베딩 대상이 되도록 해시를 무효화한다
-      await db
-        .update(announcements)
-        .set({ embeddingHash: null })
-        .where(eq(announcements.id, attachment.announcementId));
-    }
+/**
+ * 공고 한 건의 첨부를 모두 추출한다.
+ *
+ * 전체 공고를 일괄 처리하지 않는 이유: 파일 하나가 수백 KB 라 700건이면 수백 MB 를
+ * 정부 서버에서 내려받게 된다. 실제로 지원할 공고는 극소수이므로,
+ * 사용자가 지원서 상세에서 요청할 때만 그 공고 것만 받는다.
+ *
+ * 이전에 실패했거나 미지원이었던 것도 다시 시도한다 — 파서를 새로 붙였을 수 있다.
+ */
+export async function extractAttachmentsForAnnouncement(
+  announcementId: string,
+): Promise<AttachmentExtractionResult> {
+  const attachments = await db
+    .select()
+    .from(announcementAttachments)
+    .where(eq(announcementAttachments.announcementId, announcementId))
+    .orderBy(asc(announcementAttachments.createdAt));
+
+  const result: AttachmentExtractionResult = {
+    total: attachments.length,
+    parsed: 0,
+    failed: 0,
+    unsupported: 0,
+  };
+
+  for (const attachment of attachments) {
+    const status = await parseAndStore(attachment);
+    if (status === true) result.parsed += 1;
+    else if (status === "UNSUPPORTED") result.unsupported += 1;
+    else result.failed += 1;
   }
 
-  return parsed;
+  return result;
+}
+
+/** 첨부 하나를 받아 추출하고 저장한다. 성공이면 true, 아니면 상태 문자열 */
+async function parseAndStore(attachment: {
+  id: string;
+  announcementId: string;
+  fileName: string;
+  fileUrl: string;
+  mimeType: string | null;
+}): Promise<true | "UNSUPPORTED" | "FAILED"> {
+  const result = await parseAttachment({
+    fileName: attachment.fileName,
+    fileUrl: attachment.fileUrl,
+    mimeType: attachment.mimeType,
+  });
+
+  await db
+    .update(announcementAttachments)
+    .set({
+      parseStatus: result.status,
+      // 목록의 링크 텍스트("다운로드")보다 헤더의 실제 파일명이 정확하다
+      fileName: result.fileName ?? attachment.fileName,
+      extractedText: result.text ? truncate(result.text, 50_000) : null,
+      parseError: result.error ?? null,
+    })
+    .where(eq(announcementAttachments.id, attachment.id));
+
+  if (result.status !== "PARSED") {
+    return result.status === "UNSUPPORTED" ? "UNSUPPORTED" : "FAILED";
+  }
+
+  // 본문이 늘었으니 다음 임베딩 대상이 되도록 해시를 무효화한다
+  await db
+    .update(announcements)
+    .set({ embeddingHash: null })
+    .where(eq(announcements.id, attachment.announcementId));
+
+  return true;
 }
 
 /**

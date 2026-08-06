@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { LinkButton } from "@/components/common/link-button";
 import {
   ApplicationStatusControl,
+  AttachmentPanel,
   DraftEditor,
   ReviewPanel,
   getApplicationDetail,
@@ -94,6 +95,8 @@ export default async function ApplicationDetailPage({
         />
       }
     >
+      <AttachmentPanel application={application} />
+      <Separator />
       <ReviewPanel application={application} />
       <Separator />
       <DraftEditor application={application} />

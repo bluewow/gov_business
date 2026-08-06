@@ -57,6 +57,8 @@ export interface ReviewInput {
     region: string | null;
     targetAudience: string | null;
     endDate: Date | null;
+    /** 첨부파일에서 추출한 본문 — 자격요건이 여기에만 있는 공고가 많다 */
+    attachmentTexts?: string[];
   };
 }
 
@@ -89,6 +91,13 @@ export async function reviewApplication(
       : null,
     "",
     truncate(input.announcement.summary ?? input.announcement.content, 6000),
+    ...(input.announcement.attachmentTexts?.length
+      ? [
+          "",
+          "## 공고 첨부파일 본문 (자격요건의 1차 근거)",
+          truncate(input.announcement.attachmentTexts.join("\n\n"), 12000),
+        ]
+      : []),
   ]
     .filter(Boolean)
     .join("\n");

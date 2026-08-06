@@ -33,6 +33,8 @@ export interface WriteDraftInput {
     content: string;
     agency: string | null;
     targetAudience: string | null;
+    /** 첨부파일에서 추출한 본문 */
+    attachmentTexts?: string[];
   };
   /** AI 검토에서 나온 보완 사항 — 초안에 미리 반영한다 */
   reviewHints?: {
@@ -71,6 +73,13 @@ export async function writeDraftSection(
       ? `지원대상: ${input.announcement.targetAudience}`
       : null,
     truncate(input.announcement.summary ?? input.announcement.content, 4000),
+    ...(input.announcement.attachmentTexts?.length
+      ? [
+          "",
+          "## 공고 첨부파일 본문",
+          truncate(input.announcement.attachmentTexts.join("\n\n"), 8000),
+        ]
+      : []),
     input.reviewHints &&
     (input.reviewHints.weaknesses.length ||
       input.reviewHints.actionItems.length)

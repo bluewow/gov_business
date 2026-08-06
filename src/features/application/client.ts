@@ -5,6 +5,7 @@
  * import 하면 pg 가 브라우저 번들로 끌려간다. 클라이언트에서는 반드시 이 파일을 쓴다.
  */
 export { ApplicationStatusControl } from "./components/application-status-control";
+export { AttachmentPanel } from "./components/attachment-panel";
 export { DraftEditor } from "./components/draft-editor";
 export { ReviewPanel } from "./components/review-panel";
 export { SaveApplicationButton } from "./components/save-application-button";

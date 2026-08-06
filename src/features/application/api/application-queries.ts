@@ -1,6 +1,7 @@
 import { asc, desc, eq } from "drizzle-orm";
 
 import {
+  announcementAttachments,
   applicationDrafts,
   applicationEligibilityChecks,
   applications,
@@ -45,7 +46,12 @@ export async function getApplicationDetail(id: string) {
   return db.query.applications.findFirst({
     where: eq(applications.id, id),
     with: {
-      announcement: true,
+      announcement: {
+        with: {
+          // 추출 텍스트가 AI 검토·초안의 근거가 된다
+          attachments: { orderBy: asc(announcementAttachments.createdAt) },
+        },
+      },
       userBusiness: true,
       review: {
         with: {

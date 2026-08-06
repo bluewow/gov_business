@@ -1,32 +1,34 @@
+import { strFromU8, unzipSync } from "fflate";
+
 import type { ParseStatus } from "@/db/schema";
+import { normalizeWhitespace } from "@/lib/text";
 
 /**
  * 첨부파일 텍스트 추출 레이어.
  *
  * 정부지원사업은 본문이 거의 비어 있고 HWP/PDF 첨부에만 실질 내용이 있는 경우가 많다.
- * 여기서 뽑아낸 텍스트를 Announcement.content 에 합쳐야 추천 정밀도가 올라간다.
+ * 여기서 뽑아낸 텍스트가 AI 요건 검토·초안 작성의 근거가 된다.
  *
- * ⚠️ 초안 상태: PDF/HWP 파서는 아직 미구현이다. 붙일 때 후보는 아래와 같다.
- *   - PDF : `pdf-parse` / `unpdf` (서버 런타임 nodejs 필요)
- *   - HWP : `hwp.js` (한계 있음) 또는 LibreOffice(soffice) 변환 후 텍스트 추출
- *   - HWPX: zip + XML 파싱으로 비교적 쉬움 — 여기부터 붙이는 것을 권장
- * 파서를 추가하면 registerParser 로 등록만 하면 파이프라인이 자동으로 사용한다.
+ * 비용 메모: 추출 자체는 전부 로컬 연산이라 API 비용이 0 이다.
+ * 다만 파일을 내려받아야 하므로(건당 수백 KB) 전체 공고를 일괄 처리하지 않고
+ * 사용자가 지원서 상세에서 요청할 때만 돌린다.
  */
 
 export interface AttachmentParseResult {
   status: ParseStatus;
   text: string | null;
+  /** Content-Disposition 에서 얻은 실제 파일명 (목록의 "다운로드" 를 대체) */
+  fileName?: string;
   error?: string;
 }
 
 export interface AttachmentParser {
   name: string;
-  /** 이 파서가 처리할 수 있는 파일인지 */
   supports(input: { fileName: string; mimeType?: string | null }): boolean;
   parse(input: {
     fileName: string;
     mimeType?: string | null;
-    buffer: ArrayBuffer;
+    buffer: Uint8Array;
   }): Promise<string>;
 }
 
@@ -42,9 +44,10 @@ export function fileExtension(fileName: string): string {
   return index === -1 ? "" : fileName.slice(index + 1).toLowerCase();
 }
 
+// ── 파서 ────────────────────────────────────────────────────────
+
 const PLAIN_TEXT_EXTENSIONS = new Set(["txt", "md", "csv"]);
 
-/** 별도 의존성 없이 처리 가능한 텍스트 파일용 기본 파서 */
 registerParser({
   name: "plain-text",
   supports: ({ fileName, mimeType }) =>
@@ -53,27 +56,117 @@ registerParser({
   parse: async ({ buffer }) => new TextDecoder("utf-8").decode(buffer),
 });
 
+/**
+ * HWPX — 한글 2014 이후의 표준 포맷. zip 안에 XML 이 들어 있어 외부 뷰어 없이 읽힌다.
+ * 본문은 Contents/sectionN.xml 에 있고 태그를 걷어내면 텍스트가 남는다.
+ * (구형 .hwp 는 바이너리 포맷이라 별도 라이브러리가 필요하다 — 아직 미지원)
+ */
+registerParser({
+  name: "hwpx",
+  supports: ({ fileName }) => fileExtension(fileName) === "hwpx",
+  parse: async ({ buffer }) => {
+    const files = unzipSync(buffer);
+    const sections = Object.keys(files)
+      .filter((path) => /^Contents\/section\d+\.xml$/i.test(path))
+      .sort();
+
+    if (sections.length === 0) {
+      throw new Error(
+        "HWPX 안에서 본문(Contents/sectionN.xml)을 찾지 못했습니다.",
+      );
+    }
+
+    return (
+      sections
+        .map((path) => strFromU8(files[path]!))
+        .join("\n")
+        // 문단·줄 구분 태그는 줄바꿈으로 살리고 나머지는 제거한다
+        .replace(/<\/hp:p>/gi, "\n")
+        .replace(/<[^>]+>/g, " ")
+    );
+  },
+});
+
+/** PDF — unpdf(pdf.js) 로 텍스트 레이어를 뽑는다. 스캔본(이미지)은 빈 텍스트가 나온다. */
+registerParser({
+  name: "pdf",
+  supports: ({ fileName, mimeType }) =>
+    fileExtension(fileName) === "pdf" || mimeType === "application/pdf",
+  parse: async ({ buffer }) => {
+    // pdf.js 는 무거워서 필요할 때만 로드한다
+    const { extractText, getDocumentProxy } = await import("unpdf");
+    const pdf = await getDocumentProxy(buffer);
+    const { text } = await extractText(pdf, { mergePages: true });
+    return Array.isArray(text) ? text.join("\n") : String(text);
+  },
+});
+
+// ── 다운로드 ────────────────────────────────────────────────────
+
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024; // 20MB
+
+/**
+ * Content-Disposition 에서 실제 파일명을 뽑는다.
+ *
+ * fetch 의 헤더 값은 바이트를 latin-1 로 읽은 문자열이라, 한글 파일명이 깨져 들어온다.
+ * UTF-8 로 다시 디코딩해야 "글로벌_무역데이터…" 처럼 제대로 나온다.
+ */
+export function filenameFromDisposition(value: string | null): string | null {
+  if (!value) return null;
+
+  // filename* 를 우선하되, 없으면 filename 을 쓴다
+  const raw =
+    value.match(/filename\*=([^;]+)/i)?.[1] ??
+    value.match(/filename=([^;]+)/i)?.[1];
+  if (!raw) return null;
+
+  return decodeFilename(raw) || null;
+}
+
+/**
+ * 실제로 만난 표기 3종을 모두 처리한다.
+ *   filename="붙임1. 공고문.pdf"                       ← latin-1 로 읽혀 깨진 UTF-8
+ *   filename*=UTF-8''%ED%95%9C%EA%B8%80.hwpx           ← 표준 RFC 5987
+ *   filename*="UTF-8''%ED%95%9C%EA%B8%80.png"          ← 따옴표까지 두른 변형
+ */
+function decodeFilename(value: string): string {
+  // 1) 따옴표 → 2) UTF-8'' 접두어 순으로 걷어낸다 (순서가 바뀌면 접두어가 남는다)
+  const unwrapped = value
+    .trim()
+    .replace(/^"|"$/g, "")
+    .replace(/^UTF-8''/i, "");
+
+  if (/%[0-9A-Fa-f]{2}/.test(unwrapped)) {
+    try {
+      return decodeURIComponent(unwrapped).trim();
+    } catch {
+      return unwrapped.trim();
+    }
+  }
+
+  // 퍼센트 인코딩이 아니면, 헤더가 바이트를 latin-1 로 읽어 한글이 깨진 경우다
+  const repaired = Buffer.from(unwrapped, "latin1").toString("utf8");
+  return (repaired.includes("�") ? unwrapped : repaired).trim();
+}
 
 export async function parseAttachment(input: {
   fileName: string;
   fileUrl: string;
   mimeType?: string | null;
 }): Promise<AttachmentParseResult> {
-  const parser = parsers.find((candidate) =>
-    candidate.supports({ fileName: input.fileName, mimeType: input.mimeType }),
-  );
-
-  if (!parser) {
-    return {
-      status: "UNSUPPORTED",
-      text: null,
-      error: `.${fileExtension(input.fileName) || "?"} 를 처리할 파서가 없습니다.`,
-    };
-  }
+  let resolvedName = input.fileName;
 
   try {
-    const response = await fetch(input.fileUrl);
+    const response = await fetch(input.fileUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) gov-biz-curator/0.1",
+        // Referer 가 없으면 정부 사이트가 파일 대신 에러 HTML 을 준다
+        Referer: new URL(input.fileUrl).origin,
+      },
+      cache: "no-store",
+    });
+
     if (!response.ok) {
       return {
         status: "FAILED",
@@ -82,26 +175,59 @@ export async function parseAttachment(input: {
       };
     }
 
-    const buffer = await response.arrayBuffer();
+    // 목록의 링크 텍스트("다운로드")보다 헤더의 실제 파일명이 정확하다
+    resolvedName =
+      filenameFromDisposition(response.headers.get("content-disposition")) ??
+      input.fileName;
+
+    const contentType = response.headers.get("content-type");
+    const buffer = new Uint8Array(await response.arrayBuffer());
+
     if (buffer.byteLength > MAX_ATTACHMENT_BYTES) {
       return {
         status: "FAILED",
         text: null,
+        fileName: resolvedName,
         error: `파일이 너무 큽니다 (${Math.round(buffer.byteLength / 1024 / 1024)}MB)`,
       };
     }
 
-    const text = await parser.parse({
-      fileName: input.fileName,
-      mimeType: input.mimeType,
+    const parser = parsers.find((candidate) =>
+      candidate.supports({ fileName: resolvedName, mimeType: contentType }),
+    );
+
+    if (!parser) {
+      return {
+        status: "UNSUPPORTED",
+        text: null,
+        fileName: resolvedName,
+        error: `.${fileExtension(resolvedName) || "?"} 를 처리할 파서가 없습니다.`,
+      };
+    }
+
+    const raw = await parser.parse({
+      fileName: resolvedName,
+      mimeType: contentType,
       buffer,
     });
+    const text = normalizeWhitespace(raw);
 
-    return { status: "PARSED", text };
+    if (!text) {
+      return {
+        status: "FAILED",
+        text: null,
+        fileName: resolvedName,
+        // 스캔 PDF 처럼 텍스트 레이어가 없는 경우
+        error: "추출된 텍스트가 없습니다 (이미지 기반 문서일 수 있습니다).",
+      };
+    }
+
+    return { status: "PARSED", text, fileName: resolvedName };
   } catch (error) {
     return {
       status: "FAILED",
       text: null,
+      fileName: resolvedName,
       error: error instanceof Error ? error.message : String(error),
     };
   }

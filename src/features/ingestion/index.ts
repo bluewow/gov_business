@@ -1,6 +1,7 @@
 export {
   adapters,
   embedPendingAnnouncements,
+  extractAttachmentsForAnnouncement,
   getAdapter,
   ingestAll,
   ingestSource,
