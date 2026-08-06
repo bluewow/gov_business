@@ -174,6 +174,49 @@ export async function fetchBizinfoByUrl(
   return pblancId ? fetchDetail(pblancId) : null;
 }
 
+/**
+ * 첨부 목록.
+ *
+ * 다운로드 링크의 앵커 텍스트는 전부 "다운로드" 라 파일명으로 쓸 수 없다.
+ * 대신 같은 줄의 「바로보기」 버튼이 실제 정보를 들고 있다:
+ *
+ *   <a data-extsn="hwpx"
+ *      onclick="fileBlank('/webapp/upload/…/', '202607301110490544.hwpx',
+ *                         '(제2026–482호)_「모두의_창업…」모집공고.hwpx')">
+ *
+ * 세 번째 인자가 원래 파일명이다. 이게 없으면 추출 전까지 무슨 문서인지 알 수 없어
+ * 「AI 에 넘길 첨부 고르기」가 무의미해진다.
+ * (추출 단계에서 Content-Disposition 으로 한 번 더 교정되지만, 그건 내려받은 뒤다)
+ */
+function extractAttachments($: cheerio.CheerioAPI): RawAttachment[] {
+  const attachments: RawAttachment[] = [];
+
+  $('a[href*="fileDown.do"]').each((_, element) => {
+    const href = $(element).attr("href");
+    if (!href) return;
+
+    // 같은 항목(li/div) 안의 「바로보기」 버튼에서 원래 파일명을 찾는다
+    const viewer = $(element).closest("li, div").find("a[data-extsn]").first();
+    const onclick = viewer.attr("onclick") ?? "";
+    const original = onclick.match(/,\s*'([^']+)'\s*\)/)?.[1]?.trim();
+    const extension = viewer.attr("data-extsn")?.trim();
+
+    const anchorText = normalizeWhitespace($(element).text());
+    const fileName =
+      original ||
+      (extension ? `attachment.${extension}` : "") ||
+      // 앵커 텍스트가 "다운로드" 뿐이면 이름으로서 값이 없다
+      (anchorText && anchorText !== "다운로드" ? anchorText : "attachment");
+
+    attachments.push({
+      fileName,
+      fileUrl: new URL(href, env.bizinfoBaseUrl()).toString(),
+    });
+  });
+
+  return attachments;
+}
+
 async function fetchDetail(pblancId: string): Promise<RawAnnouncement | null> {
   const url = detailUrl(pblancId);
   const $ = cheerio.load(await fetchHtml(url));
@@ -213,16 +256,7 @@ async function fetchDetail(pblancId: string): Promise<RawAnnouncement | null> {
       $("h2.title").parent().find(".category").first().text(),
     ) || pick("사업분류", "지원분야");
 
-  const attachments: RawAttachment[] = [];
-  $('a[href*="fileDown.do"]').each((_, element) => {
-    const href = $(element).attr("href");
-    if (!href) return;
-    const fileName = normalizeWhitespace($(element).text()) || "attachment";
-    attachments.push({
-      fileName,
-      fileUrl: new URL(href, env.bizinfoBaseUrl()).toString(),
-    });
-  });
+  const attachments = extractAttachments($);
 
   const { startDate, endDate } = parsePeriod(pick("신청기간"));
 

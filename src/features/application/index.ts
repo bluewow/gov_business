@@ -1,5 +1,6 @@
 export {
   extractApplicationAttachments,
+  setAttachmentUsage,
   generateAllDrafts,
   generateDraft,
   removeApplication,

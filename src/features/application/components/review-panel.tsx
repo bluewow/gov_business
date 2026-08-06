@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { EligibilityVerdict } from "@/db/schema";
 
 import { runReview } from "../actions";
+import { checkAiReadiness } from "../ai-readiness";
 import type { ApplicationDetail } from "../api/application-queries";
 
 const VERDICT_META: Record<
@@ -52,6 +53,8 @@ export function ReviewPanel({
   const [isPending, startTransition] = useTransition();
   const review = application.review;
 
+  const readiness = checkAiReadiness(application.announcement.attachments);
+
   function handleReview() {
     setError(null);
     startTransition(async () => {
@@ -73,10 +76,20 @@ export function ReviewPanel({
             공고의 자격요건을 항목별로 쪼개 내 사업과 대조합니다.
           </p>
         </div>
-        <Button size="sm" onClick={handleReview} disabled={isPending}>
+        <Button
+          size="sm"
+          onClick={handleReview}
+          disabled={isPending || !readiness.ready}
+        >
           {isPending ? "검토 중…" : review ? "다시 검토" : "AI 검토 실행"}
         </Button>
       </div>
+
+      {readiness.notice ? (
+        <p className="text-muted-foreground rounded-lg border border-dashed p-3 text-xs leading-5">
+          {readiness.notice}
+        </p>
+      ) : null}
 
       {error ? (
         <p className="text-destructive border-destructive/30 bg-destructive/5 rounded-lg border p-3 text-sm">

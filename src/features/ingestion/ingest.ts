@@ -281,6 +281,8 @@ export interface AttachmentExtractionResult {
  */
 export async function extractAttachmentsForAnnouncement(
   announcementId: string,
+  /** 지정하면 이 첨부만 추출한다. 비우면 전부 */
+  attachmentIds?: string[],
 ): Promise<AttachmentExtractionResult & { enrichedFromSource: boolean }> {
   let enrichedFromSource = false;
 
@@ -296,28 +298,93 @@ export async function extractAttachmentsForAnnouncement(
       enriched.attachmentsAdded > 0 || enriched.contentImproved;
   }
 
-  const attachments = await db
+  const all = await db
     .select()
     .from(announcementAttachments)
     .where(eq(announcementAttachments.announcementId, announcementId))
     .orderBy(asc(announcementAttachments.createdAt));
 
+  // 「관련사이트」에서 첨부를 새로 가져온 경우엔 지정 목록에 없는 것도 받아야 한다
+  const selected =
+    attachmentIds?.length && !enrichedFromSource
+      ? all.filter((item) => attachmentIds.includes(item.id))
+      : all;
+
   const result: AttachmentExtractionResult & { enrichedFromSource: boolean } = {
     enrichedFromSource,
-    total: attachments.length,
+    total: selected.length,
     parsed: 0,
     failed: 0,
     unsupported: 0,
   };
 
-  for (const attachment of attachments) {
+  for (const attachment of selected) {
     const status = await parseAndStore(attachment);
     if (status === true) result.parsed += 1;
     else if (status === "UNSUPPORTED") result.unsupported += 1;
     else result.failed += 1;
   }
 
+  await deduplicateAiInputs(announcementId);
+
   return result;
+}
+
+/** 확장자를 뗀 파일명 — `공고문.hwpx` 와 `공고문.pdf` 를 같은 문서로 묶는 키 */
+function baseName(fileName: string): string {
+  return fileName
+    .replace(/\.[a-zA-Z0-9]{1,5}$/, "")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * 같은 문서가 hwpx·pdf 로 두 벌 올라온 경우 AI 입력에서 한 벌만 남긴다.
+ *
+ * 실측: 같은 공고에 `…모집공고.hwpx`(30,085자)와 `…모집공고.pdf`(25,077자)가 함께 있었다.
+ * 둘 다 넘기면 프롬프트 상한에 걸려 뒤쪽 자격요건이 통째로 잘려 나간다.
+ * 형식 선호(pdf/hwpx) 대신 **추출된 텍스트가 가장 많은 쪽**을 남긴다 —
+ * pdf 가 스캔본이면 텍스트가 거의 안 나오므로 형식으로 정하면 오히려 손해다.
+ *
+ * 이름이 다른 첨부(공고문 vs 신청서 양식)는 서로 다른 문서이므로 건드리지 않는다.
+ * 사용자가 화면에서 언제든 다시 켜고 끌 수 있는 기본값일 뿐이다.
+ */
+async function deduplicateAiInputs(announcementId: string): Promise<void> {
+  const rows = await db
+    .select({
+      id: announcementAttachments.id,
+      fileName: announcementAttachments.fileName,
+      length: sql<number>`coalesce(length(${announcementAttachments.extractedText}), 0)::int`,
+    })
+    .from(announcementAttachments)
+    .where(
+      and(
+        eq(announcementAttachments.announcementId, announcementId),
+        eq(announcementAttachments.parseStatus, "PARSED"),
+      ),
+    );
+
+  const groups = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const key = baseName(row.fileName);
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
+
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+
+    const keep = group.reduce((best, row) =>
+      row.length > best.length ? row : best,
+    );
+
+    for (const row of group) {
+      if (row.id === keep.id) continue;
+      await db
+        .update(announcementAttachments)
+        .set({ useForAi: false })
+        .where(eq(announcementAttachments.id, row.id));
+    }
+  }
 }
 
 /**

@@ -77,7 +77,8 @@ export async function writeDraftSection(
       ? [
           "",
           "## 공고 첨부파일 본문",
-          truncate(input.announcement.attachmentTexts.join("\n\n"), 8000),
+          // 초안은 섹션마다 호출되므로 검토(24,000)보다는 보수적으로 잡는다
+          truncate(input.announcement.attachmentTexts.join("\n\n"), 16000),
         ]
       : []),
     input.reviewHints &&

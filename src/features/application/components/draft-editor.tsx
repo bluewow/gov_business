@@ -10,6 +10,7 @@ import { useRuntimeKeys } from "@/stores/api-keys-store";
 import { Textarea } from "@/components/ui/textarea";
 
 import { generateAllDrafts, generateDraft, saveDraft } from "../actions";
+import { checkAiReadiness } from "../ai-readiness";
 import type { ApplicationDetail } from "../api/application-queries";
 import { DRAFT_SECTIONS } from "../sections";
 
@@ -112,6 +113,8 @@ export function DraftEditor({
     (section) => (sections[section.key]?.content ?? "").trim().length > 0,
   ).length;
 
+  const readiness = checkAiReadiness(application.announcement.attachments);
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -122,10 +125,20 @@ export function DraftEditor({
             AI 초안은 출발점이고, 수치는 직접 채워야 합니다.
           </p>
         </div>
-        <Button size="sm" onClick={handleGenerateAll} disabled={isPending}>
+        <Button
+          size="sm"
+          onClick={handleGenerateAll}
+          disabled={isPending || !readiness.ready}
+        >
           {busyKey === "ALL" ? "전체 생성 중…" : "전체 초안 생성"}
         </Button>
       </div>
+
+      {readiness.notice ? (
+        <p className="text-muted-foreground rounded-lg border border-dashed p-3 text-xs leading-5">
+          {readiness.notice}
+        </p>
+      ) : null}
 
       {error ? (
         <p className="text-destructive border-destructive/30 bg-destructive/5 rounded-lg border p-3 text-sm">
@@ -154,7 +167,7 @@ export function DraftEditor({
                 <Button
                   variant="outline"
                   size="xs"
-                  disabled={isPending}
+                  disabled={isPending || !readiness.ready}
                   onClick={() => handleGenerate(section.key)}
                 >
                   {busyKey === section.key ? "생성 중…" : "AI 초안"}

@@ -1,0 +1,1 @@
+ALTER TABLE "announcement_attachments" ADD COLUMN "use_for_ai" boolean DEFAULT true NOT NULL;

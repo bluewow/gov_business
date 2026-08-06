@@ -321,9 +321,12 @@ STEP 2 「수집 현황」의 **API 키** 패널이 입력을 받고, sessionSto
 
 ### 미구현 / 다음 작업
 
-- **첨부파일 파서** — `attachment-parser.ts` 에 plain-text 파서만 등록돼 있다. HWPX(zip+XML) → PDF → HWP 순으로 붙이는 것을 권장. `registerParser()` 로 등록만 하면 파이프라인이 자동으로 사용한다.
+- **첨부파일 파서** — plain-text · hwpx · pdf · **hwp** · **zip** 이 등록돼 있다(실측 표본 40건 중 38건 추출 성공). 새 형식은 `registerParser()` 로 등록만 하면 파이프라인이 자동으로 쓴다. 남은 미지원: xlsx · docx · pptx · 스캔 PDF(텍스트 레이어 없음 — 대부분 포스터라 손실이 작다).
 - **egbiz 셀렉터** — `sources/egbiz.ts` 의 `SELECTORS` 와 목록 URL 은 아직 자리표시자다. 상세 URL 형식은 `egbiz.or.kr/sp/supportPrjDtl.do?bizCyclId=PD...` 로 확인했고 서버 렌더도 되지만, egbiz 공고 상당수가 기업마당에도 올라오므로 우선순위를 낮춰 두었다. 수집 전 robots.txt / 이용약관 확인.
 - **기업마당 마크업 의존** — `sources/bizinfo.ts` 는 스크레이퍼라 마크업이 바뀌면 조용히 0건이 된다. 라벨(`span.s_title`) → 값(`div.txt`) 매핑이라 항목 순서 변경에는 강하지만, 지원분야는 제목 위 `div.category` 배지에서 읽으므로 이쪽이 바뀌면 `category` 가 비게 된다. 수집 0건이면 `ingestion_runs` 로 감지할 것. 공식 오픈 API(기업마당 발급 `crtfcKey`, data.go.kr 키와 다름)로 갈아탈 여지도 있다.
+- **기업마당 첨부 파일명은 앵커 텍스트가 아니라 「바로보기」 버튼에 있다** — 다운로드 링크의 텍스트는 전부 "다운로드" 라 파일명으로 쓸 수 없다. 같은 항목의 `<a data-extsn="hwpx" onclick="fileBlank(경로, 저장명, 원래파일명)">` 세 번째 인자가 진짜 파일명이다. 이게 없으면 추출 전까지 무슨 문서인지 알 수 없어 「AI 에 넘길 첨부 고르기」가 무의미해진다. (추출 단계에서 `Content-Disposition` 으로 한 번 더 교정되지만 그건 내려받은 뒤다.)
+- **구형 `.hwp` 는 CFB 바이너리라 별도 파서가 필요하다** — 수집 첨부 중 최대 단일 확장자(292건)이고, 55개 공고는 첨부가 `.hwp`·`.zip` 뿐이라 이게 없으면 자격요건을 통째로 못 읽는다. [hwp-text.ts](src/features/ingestion/hwp-text.ts) 가 `cfb` 로 컨테이너를 열고 `BodyText/SectionN` 을 raw deflate 로 푼 뒤 레코드 스트림에서 `HWPTAG_PARA_TEXT`(67)만 모은다. 주의점 둘: ① 압축 여부는 FileHeader 오프셋 36 의 플래그 bit 0 이고 zlib 헤더가 없어 `inflateSync`(raw)를 써야 한다 ② 본문의 제어문자 중 표·그림 참조는 **8 WCHAR 를 통째로 차지**하므로 건너뛰지 않으면 개체 정보가 깨진 글자로 섞인다.
+- **AI 검토·초안은 첨부 추출을 마친 뒤에만 실행된다** — 자격요건은 대부분 첨부 공고문에만 있고 공고 본문은 평균 87~320자뿐이라, 추출 전에 검토를 돌리면 근거 없는 판단이 나온다. [ai-readiness.ts](src/features/application/ai-readiness.ts) 가 "첨부가 있는데 하나도 `PARSED` 가 아닌" 상태를 막는다(UI 버튼 + 서버 액션 양쪽). 첨부가 아예 없는 공고는 막지 않는다 — 막으면 영영 실행할 수 없다. 넘길 첨부는 `announcement_attachments.use_for_ai` 로 항목별로 켜고 끄며, 추출 직후 **확장자만 다른 동명 파일은 텍스트가 가장 많은 한 벌만 남긴다**(형식 선호가 아니라 길이 기준 — pdf 가 스캔본이면 텍스트가 거의 안 나오므로 형식으로 고정하면 손해다).
 - **기업마당 페이지 크기는 15건 고정** — `rows` · `pageUnit` · `recordCountPerPage` · `pageSize` 어느 것을 넘겨도 15건만 온다(실측). `cpage` 만 동작하므로 `FetchOptions.pageSize` 는 이 소스에서 무시된다. 수집량은 `maxPages`(기본 20 = 300건)로만 조절한다.
 - **인증** — `users` 테이블만 있고 로그인은 없다. 모든 화면이 데모 계정 하나를 공유한다.
 - **사업 프로필 다중 등록** — 스키마는 여러 건을 지원하지만 UI 는 가장 최근 1건만 다룬다.

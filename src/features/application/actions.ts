@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { withRuntimeKeys, type RuntimeKeys } from "@/lib/runtime-keys";
 
 import {
+  announcementAttachments,
   applicationDrafts,
   applicationEligibilityChecks,
   applicationReviews,
@@ -18,6 +19,7 @@ import { isAiEnabled } from "@/lib/env";
 
 import { extractAttachmentsForAnnouncement } from "@/features/ingestion";
 
+import { checkAiReadiness } from "./ai-readiness";
 import {
   getApplicationDetail,
   type ApplicationDetail,
@@ -39,11 +41,39 @@ function revalidateApplication(id?: string) {
   if (id) revalidatePath(`/applications/${id}`);
 }
 
-/** 추출이 끝난 첨부 본문만 모은다 — AI 검토·초안의 1차 근거가 된다 */
+/**
+ * AI 검토·초안에 넘길 첨부 본문.
+ *
+ * 추출이 끝났고(`PARSED`) 사용자가 켜 둔(`useForAi`) 것만 모은다.
+ * 공고문·신청서 양식·체크리스트가 함께 붙는 데다 같은 문서가 hwpx·pdf 로 두 벌
+ * 올라오는 일이 흔해서, 전부 넘기면 프롬프트 상한에 걸려 자격요건이 잘려 나간다.
+ */
 function extractedTexts(application: ApplicationDetail): string[] {
   return application.announcement.attachments
-    .filter((item) => item.parseStatus === "PARSED" && item.extractedText)
+    .filter(
+      (item) =>
+        item.useForAi && item.parseStatus === "PARSED" && item.extractedText,
+    )
     .map((item) => `[첨부: ${item.fileName}]\n${item.extractedText}`);
+}
+
+/** AI 입력으로 쓸 첨부인지 켜고 끈다 */
+export async function setAttachmentUsage(
+  applicationId: string,
+  attachmentId: string,
+  useForAi: boolean,
+): Promise<ActionResult> {
+  try {
+    await db
+      .update(announcementAttachments)
+      .set({ useForAi })
+      .where(eq(announcementAttachments.id, attachmentId));
+
+    revalidateApplication(applicationId);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: toMessage(error) };
+  }
 }
 
 function toMessage(error: unknown): string {
@@ -128,6 +158,12 @@ async function runReviewInner(applicationId: string): Promise<ActionResult> {
   try {
     const application = await getApplicationDetail(applicationId);
     if (!application) return { ok: false, error: "지원서를 찾을 수 없습니다." };
+
+    // UI 에서 막지만 액션은 직접 호출될 수 있으므로 여기서도 확인한다
+    const readiness = checkAiReadiness(application.announcement.attachments);
+    if (!readiness.ready) {
+      return { ok: false, error: readiness.notice };
+    }
 
     const { payload, model } = await reviewApplication({
       business: {
@@ -222,6 +258,12 @@ async function generateDraftInner(
   try {
     const application = await getApplicationDetail(applicationId);
     if (!application) return { ok: false, error: "지원서를 찾을 수 없습니다." };
+
+    // UI 에서 막지만 액션은 직접 호출될 수 있으므로 여기서도 확인한다
+    const readiness = checkAiReadiness(application.announcement.attachments);
+    if (!readiness.ready) {
+      return { ok: false, error: readiness.notice };
+    }
 
     const { content } = await writeDraftSection({
       section,
@@ -345,6 +387,8 @@ async function generateAllDraftsInner(
  */
 export async function extractApplicationAttachments(
   applicationId: string,
+  /** 지정하면 이 첨부만 추출한다. 비우면 전부 */
+  attachmentIds?: string[],
 ): Promise<
   ActionResult & {
     parsed?: number;
@@ -358,6 +402,7 @@ export async function extractApplicationAttachments(
 
     const result = await extractAttachmentsForAnnouncement(
       application.announcementId,
+      attachmentIds,
     );
 
     revalidateApplication(applicationId);

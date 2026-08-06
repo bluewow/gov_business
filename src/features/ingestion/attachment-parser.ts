@@ -87,6 +87,19 @@ registerParser({
   },
 });
 
+/**
+ * HWP — 한글 5.0 바이너리(CFB) 포맷. 수집된 첨부 중 가장 많은 확장자다.
+ * 파싱이 무거워 필요할 때만 로드한다.
+ */
+registerParser({
+  name: "hwp",
+  supports: ({ fileName }) => fileExtension(fileName) === "hwp",
+  parse: async ({ buffer }) => {
+    const { extractHwpText } = await import("./hwp-text");
+    return extractHwpText(buffer);
+  },
+});
+
 /** PDF — unpdf(pdf.js) 로 텍스트 레이어를 뽑는다. 스캔본(이미지)은 빈 텍스트가 나온다. */
 registerParser({
   name: "pdf",
@@ -98,6 +111,48 @@ registerParser({
     const pdf = await getDocumentProxy(buffer);
     const { text } = await extractText(pdf, { mergePages: true });
     return Array.isArray(text) ? text.join("\n") : String(text);
+  },
+});
+
+/**
+ * ZIP — 「2026년…지원사업 공고문+붙임.zip」처럼 공고문 자체가 압축 안에 들어 있는 경우가 있다.
+ * 안의 파일을 다시 각 파서에 태운다. 중첩 zip 은 열지 않는다(재귀 폭탄 방지).
+ */
+const MAX_ZIP_ENTRIES = 20;
+
+registerParser({
+  name: "zip",
+  supports: ({ fileName }) => fileExtension(fileName) === "zip",
+  parse: async ({ buffer }) => {
+    const files = unzipSync(buffer);
+    const texts: string[] = [];
+
+    for (const [path, content] of Object.entries(files).slice(
+      0,
+      MAX_ZIP_ENTRIES,
+    )) {
+      const name = path.split("/").pop() ?? path;
+      const extension = fileExtension(name);
+      if (!extension || extension === "zip") continue;
+
+      const parser = parsers.find(
+        (candidate) =>
+          candidate.name !== "zip" && candidate.supports({ fileName: name }),
+      );
+      if (!parser) continue;
+
+      try {
+        const text = await parser.parse({ fileName: name, buffer: content });
+        if (text.trim()) texts.push(`[${name}]\n${text}`);
+      } catch {
+        // 한 파일이 깨져도 나머지는 살린다
+      }
+    }
+
+    if (texts.length === 0) {
+      throw new Error("압축 안에서 읽을 수 있는 문서를 찾지 못했습니다.");
+    }
+    return texts.join("\n\n");
   },
 });
 

@@ -197,6 +197,15 @@ export const announcementAttachments = pgTable(
     parseStatus: parseStatusEnum().notNull().default("PENDING"),
     parseError: text(),
 
+    /**
+     * AI 요건 검토·초안 작성의 입력으로 쓸지 여부.
+     *
+     * 공고 하나에 공고문·신청서 양식·체크리스트가 같이 붙고, 같은 문서가 hwpx·pdf 로
+     * 두 벌 올라오는 일도 흔하다. 전부 프롬프트에 밀어 넣으면 상한에 걸려 정작 필요한
+     * 자격요건이 잘려 나가므로, 사용자가 넘길 것을 고를 수 있게 한다.
+     */
+    useForAi: boolean().notNull().default(true),
+
     ...timestamps,
   },
   (table) => [
