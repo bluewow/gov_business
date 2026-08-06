@@ -220,6 +220,8 @@ export async function parseAttachment(input: {
         Referer: new URL(input.fileUrl).origin,
       },
       cache: "no-store",
+      // 파일이 커서 목록·상세보다 넉넉히 준다
+      signal: AbortSignal.timeout(60_000),
     });
 
     if (!response.ok) {

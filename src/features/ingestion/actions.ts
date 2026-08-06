@@ -10,12 +10,11 @@ import type { AnnouncementSource } from "@/db";
 
 import {
   acquireEmbeddingLock,
+  acquireIngestLock,
+  adapters,
   embedPendingWithoutLock,
-  getAdapter,
-  ingestAll,
-  ingestSource,
+  ingestSourceWithoutLock,
 } from "./ingest";
-import type { IngestionResult } from "./types";
 
 function revalidateAll() {
   revalidatePath("/ingestion");
@@ -24,34 +23,54 @@ function revalidateAll() {
   revalidatePath("/");
 }
 
-/** 수집 현황 화면의 "지금 수집" 버튼 */
+/**
+ * 수집 현황 화면의 "지금 수집" 버튼 — 백그라운드로 시작한다.
+ *
+ * 예전에는 수집이 끝날 때까지 기다렸는데, 페이지를 옮기거나 dev 서버가 재컴파일되면
+ * 요청이 죽어 ingestion_runs 에 RUNNING 이 영영 남았다. 임베딩과 같은 방식으로
+ * 잠금을 응답 전에 잡고 after() 에 작업을 넘긴다. 결과는 실행 이력에서 확인한다.
+ *
+ * 첨부 다운로드(skipAttachments)는 하지 않는다 — 첨부는 지원서 상세에서
+ * 사용자가 요청할 때만 받기로 한 설계를 따른다.
+ */
 export async function runIngestion(
   source?: AnnouncementSource,
   keys?: RuntimeKeys,
-): Promise<IngestionResult[]> {
-  return withRuntimeKeys(keys, async () => {
-    const results = source
-      ? await (async () => {
-          const adapter = getAdapter(source);
-          if (!adapter) {
-            return [
-              {
-                source,
-                fetched: 0,
-                created: 0,
-                updated: 0,
-                embedded: 0,
-                error: `알 수 없는 source: ${source}`,
-              } satisfies IngestionResult,
-            ];
-          }
-          return [await ingestSource(adapter)];
-        })()
-      : await ingestAll();
+): Promise<{ started: boolean; error?: string }> {
+  const targets = source
+    ? adapters.filter((a) => a.source === source)
+    : adapters;
+  if (source && targets.length === 0) {
+    return { started: false, error: `알 수 없는 source: ${source}` };
+  }
 
-    revalidateAll();
-    return results;
+  const lock = await acquireIngestLock();
+  if (!lock) {
+    return { started: false, error: "이미 수집이 진행 중입니다." };
+  }
+
+  after(async () => {
+    try {
+      // after 콜백은 요청 컨텍스트 밖에서 돌 수 있으므로 키를 다시 실어 준다
+      await withRuntimeKeys(keys, async () => {
+        for (const adapter of targets) {
+          const result = await ingestSourceWithoutLock(adapter, {
+            skipAttachments: true,
+          });
+          console.info(
+            `[ingest] ${adapter.source} 완료 — 수집 ${result.fetched} · 신규 ${result.created} · 갱신 ${result.updated} · 임베딩 ${result.embedded}${result.error ? ` · 오류: ${result.error}` : ""}`,
+          );
+        }
+      });
+    } catch (error) {
+      console.error("[ingest] 백그라운드 수집 실패", error);
+    } finally {
+      await lock.release();
+      revalidateAll();
+    }
   });
+
+  return { started: true };
 }
 
 /** 한 번의 백그라운드 실행에서 처리할 최대 건수 */

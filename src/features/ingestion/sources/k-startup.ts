@@ -95,6 +95,8 @@ async function fetchPage(page: number, perPage: number): Promise<Row[]> {
     headers: { Accept: "application/json" },
     // 공고는 하루 단위로 갱신되므로 캐시가 의미 없다
     cache: "no-store",
+    // 정부 API 가 응답 없이 매달리면 수집이 영영 안 끝난다
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {

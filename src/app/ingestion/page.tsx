@@ -8,6 +8,7 @@ import {
   getSourceStatuses,
   IngestionPanel,
   IngestionRuns,
+  isIngestionRunning,
   listIngestionRuns,
 } from "@/features/ingestion";
 import { env } from "@/lib/env";
@@ -16,10 +17,11 @@ export const metadata: Metadata = { title: "수집 현황" };
 export const dynamic = "force-dynamic";
 
 export default async function IngestionPage() {
-  const [sources, embedding, runs] = await Promise.all([
+  const [sources, embedding, runs, ingestionRunning] = await Promise.all([
     getSourceStatuses(),
     getEmbeddingStatus(),
     listIngestionRuns(15),
+    isIngestionRunning(),
   ]);
 
   // 값이 아니라 "존재 여부"만 내려보낸다 — 서버 키가 브라우저로 새면 안 된다
@@ -55,7 +57,11 @@ export default async function IngestionPage() {
     >
       <ApiKeysPanel fallback={fallback} />
 
-      <IngestionPanel sources={sources} embedding={embedding} />
+      <IngestionPanel
+        sources={sources}
+        embedding={embedding}
+        ingestionRunning={ingestionRunning}
+      />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold">실행 이력</h2>

@@ -53,6 +53,7 @@ async function fetchHtml(url: string): Promise<string> {
       Accept: "text/html,application/xhtml+xml",
     },
     cache: "no-store",
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {

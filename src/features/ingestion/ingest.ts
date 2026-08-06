@@ -75,16 +75,16 @@ const EMBED_LOCK_KEY = 811_002;
 
 /**
  * 잠금을 잡고 해제 함수를 돌려준다. 실패하면 null.
- * 백그라운드 임베딩처럼 "요청이 끝난 뒤에도 계속 도는" 작업에 쓴다 —
+ * 백그라운드 작업(수집·임베딩)처럼 "요청이 끝난 뒤에도 계속 도는" 작업에 쓴다 —
  * 응답 전에 잠가 두어야 화면이 곧바로 「진행 중」을 볼 수 있다.
  */
-export async function acquireEmbeddingLock(): Promise<{
-  release: () => Promise<void>;
-} | null> {
+async function acquireLock(
+  key: number,
+): Promise<{ release: () => Promise<void> } | null> {
   const client = await db.$client.connect();
   const { rows } = await client.query<{ locked: boolean }>(
     "SELECT pg_try_advisory_lock($1) AS locked",
-    [EMBED_LOCK_KEY],
+    [key],
   );
 
   if (!rows[0]?.locked) {
@@ -95,7 +95,7 @@ export async function acquireEmbeddingLock(): Promise<{
   return {
     release: async () => {
       try {
-        await client.query("SELECT pg_advisory_unlock($1)", [EMBED_LOCK_KEY]);
+        await client.query("SELECT pg_advisory_unlock($1)", [key]);
       } finally {
         client.release();
       }
@@ -103,12 +103,56 @@ export async function acquireEmbeddingLock(): Promise<{
   };
 }
 
-/** 임베딩이 지금 돌고 있는지 (잠금 점유 여부로 판단) */
-export async function isEmbeddingRunning(): Promise<boolean> {
-  const lock = await acquireEmbeddingLock();
+export function acquireEmbeddingLock() {
+  return acquireLock(EMBED_LOCK_KEY);
+}
+
+export function acquireIngestLock() {
+  return acquireLock(INGEST_LOCK_KEY);
+}
+
+/** 잠금 점유 여부로 실행 중인지 판단 */
+async function isLockHeld(key: number): Promise<boolean> {
+  const lock = await acquireLock(key);
   if (!lock) return true;
   await lock.release();
   return false;
+}
+
+export function isEmbeddingRunning(): Promise<boolean> {
+  return isLockHeld(EMBED_LOCK_KEY);
+}
+
+export function isIngestionRunning(): Promise<boolean> {
+  return isLockHeld(INGEST_LOCK_KEY);
+}
+
+/**
+ * 죽은 RUNNING 기록을 정리한다.
+ *
+ * 수집이 도중에 죽으면(서버 재시작·페이지 이탈로 요청 중단) 완료 갱신을 못 해
+ * ingestion_runs 에 RUNNING 이 영영 남는다. 잠금은 세션이 끊기며 자동 해제되므로,
+ * "잠금이 비어 있는데 RUNNING 기록이 있다"면 그 기록은 확실히 죽은 것이다.
+ * 실행 이력을 읽을 때마다 불러 화면이 스스로 치유되게 한다.
+ */
+export async function reconcileStaleRuns(): Promise<number> {
+  const lock = await acquireLock(INGEST_LOCK_KEY);
+  if (!lock) return 0; // 진짜 수집이 돌고 있다 — 건드리지 않는다
+
+  try {
+    const stale = await db
+      .update(ingestionRuns)
+      .set({
+        status: "FAILED",
+        error: "실행이 중단되었습니다 (서버 재시작 또는 요청 취소).",
+        finishedAt: new Date(),
+      })
+      .where(eq(ingestionRuns.status, "RUNNING"))
+      .returning({ id: ingestionRuns.id });
+    return stale.length;
+  } finally {
+    await lock.release();
+  }
 }
 
 async function withAdvisoryLock<T>(
@@ -618,6 +662,14 @@ export async function ingestSource(
       skippedReason: "다른 수집이 이미 실행 중이라 건너뛰었습니다.",
     },
   );
+}
+
+/** 잠금 없이 실행하는 버전 — 호출자가 이미 ingest 잠금을 쥐고 있을 때만 쓸 것 */
+export function ingestSourceWithoutLock(
+  adapter: AnnouncementSourceAdapter,
+  options: IngestOptions = {},
+): Promise<IngestionResult> {
+  return ingestSourceInner(adapter, options);
 }
 
 async function ingestSourceInner(

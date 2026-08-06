@@ -12,6 +12,7 @@ export { runEmbedding, runIngestion } from "./actions";
 export {
   getEmbeddingStatus,
   getSourceStatuses,
+  isIngestionRunning,
   listIngestionRuns,
 } from "./api/ingestion-queries";
 export type {

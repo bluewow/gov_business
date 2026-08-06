@@ -14,7 +14,10 @@ import {
   adapters,
   embeddingTargetCondition,
   isEmbeddingRunning,
+  reconcileStaleRuns,
 } from "../ingest";
+
+export { isIngestionRunning } from "../ingest";
 
 export interface SourceStatus {
   source: AnnouncementSource;
@@ -65,6 +68,9 @@ export async function getSourceStatuses(): Promise<SourceStatus[]> {
 }
 
 export async function listIngestionRuns(limit = 15) {
+  // 서버 재시작 등으로 죽은 RUNNING 기록을 먼저 정리한다 (잠금이 비어 있으면 죽은 것)
+  await reconcileStaleRuns();
+
   return db
     .select()
     .from(ingestionRuns)

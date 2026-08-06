@@ -84,6 +84,7 @@ async function fetchListPage(
       "X-Requested-With": "XMLHttpRequest",
     },
     cache: "no-store",
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {
@@ -129,6 +130,7 @@ async function fetchDetail(bizCyclId: string): Promise<{
   const response = await fetch(url, {
     headers: { "User-Agent": USER_AGENT, Accept: "text/html" },
     cache: "no-store",
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {

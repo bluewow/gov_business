@@ -21,7 +21,6 @@ import { formatDate } from "@/lib/format";
 
 import { runEmbedding, runIngestion } from "../actions";
 import type { EmbeddingStatus, SourceStatus } from "../api/ingestion-queries";
-import type { IngestionResult } from "../types";
 
 function StatusBadge({ status }: { status: string | null }) {
   if (!status) return <Badge variant="ghost">실행 이력 없음</Badge>;
@@ -33,36 +32,41 @@ function StatusBadge({ status }: { status: string | null }) {
 export function IngestionPanel({
   sources,
   embedding,
+  ingestionRunning,
 }: {
   sources: SourceStatus[];
   embedding: EmbeddingStatus;
+  /** 백그라운드 수집이 돌고 있는지 (잠금 점유 기준) */
+  ingestionRunning: boolean;
 }) {
   const router = useRouter();
   const keys = useRuntimeKeys();
   const [isPending, startTransition] = useTransition();
   const [running, setRunning] = useState<string | null>(null);
-  const [results, setResults] = useState<IngestionResult[] | null>(null);
-  const [embedMessage, setEmbedMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
   function collect(source?: AnnouncementSource) {
-    setResults(null);
-    setEmbedMessage(null);
+    setMessage(null);
     setRunning(source ?? "ALL");
     startTransition(async () => {
-      const next = await runIngestion(source, keys);
-      setResults(next);
+      const result = await runIngestion(source, keys);
+      setMessage(
+        result.error
+          ? `수집 실패: ${result.error}`
+          : "백그라운드에서 수집을 시작했습니다. 페이지를 옮겨도 계속 진행되며, 결과는 아래 실행 이력에 남습니다.",
+      );
       setRunning(null);
+      // 잠금이 이미 잡혀 있으므로 곧바로 새로고침하면 화면이 「진행 중」을 본다
       router.refresh();
     });
   }
 
   function embed() {
-    setResults(null);
-    setEmbedMessage(null);
+    setMessage(null);
     setRunning("EMBED");
     startTransition(async () => {
       const result = await runEmbedding(keys);
-      setEmbedMessage(
+      setMessage(
         result.error
           ? `임베딩 실패: ${result.error}`
           : "백그라운드에서 임베딩을 시작했습니다. 페이지를 옮기거나 창을 닫아도 계속 진행됩니다.",
@@ -75,11 +79,12 @@ export function IngestionPanel({
 
   // 진행 중이면 주기적으로 새로고침해 진행률을 갱신한다.
   // 서버가 잠금 해제를 보고 running=false 를 주면 이 효과가 정리되며 폴링도 멈춘다.
+  const anyRunning = embedding.running || ingestionRunning;
   useEffect(() => {
-    if (!embedding.running) return;
+    if (!anyRunning) return;
     const timer = setInterval(() => router.refresh(), 3000);
     return () => clearInterval(timer);
-  }, [embedding.running, router]);
+  }, [anyRunning, router]);
 
   // 서버 .env 든 이 탭에 넣은 키든 하나라도 있으면 임베딩을 돌릴 수 있다
   const canEmbed = embedding.aiEnabled || Boolean(keys.openai);
@@ -94,8 +99,16 @@ export function IngestionPanel({
       <section className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold">수집 소스</h2>
-          <Button size="sm" onClick={() => collect()} disabled={isPending}>
-            {running === "ALL" ? "수집 중…" : "전체 수집"}
+          <Button
+            size="sm"
+            onClick={() => collect()}
+            disabled={isPending || ingestionRunning}
+          >
+            {ingestionRunning
+              ? "수집 진행 중…"
+              : running === "ALL"
+                ? "시작하는 중…"
+                : "전체 수집"}
           </Button>
         </div>
 
@@ -138,10 +151,12 @@ export function IngestionPanel({
                     variant="outline"
                     size="sm"
                     className="self-start"
-                    disabled={isPending}
+                    disabled={isPending || ingestionRunning}
                     onClick={() => collect(source.source)}
                   >
-                    {running === source.source ? "수집 중…" : "이 소스만 수집"}
+                    {running === source.source
+                      ? "시작하는 중…"
+                      : "이 소스만 수집"}
                   </Button>
                 </CardContent>
               </Card>
@@ -211,34 +226,8 @@ export function IngestionPanel({
         </Card>
       </section>
 
-      {results ? (
-        <section className="flex flex-col gap-2">
-          <h2 className="text-sm font-semibold">실행 결과</h2>
-          {results.map((result) => (
-            <div
-              key={result.source}
-              className="rounded-lg border p-3 text-sm leading-6"
-            >
-              <span className="font-medium">{result.source}</span> — 수집{" "}
-              {result.fetched} · 신규 {result.created} · 갱신 {result.updated} ·
-              임베딩 {result.embedded}
-              {result.skippedReason ? (
-                <p className="text-muted-foreground text-xs">
-                  {result.skippedReason}
-                </p>
-              ) : null}
-              {result.error ? (
-                <p className="text-destructive text-xs">{result.error}</p>
-              ) : null}
-            </div>
-          ))}
-        </section>
-      ) : null}
-
-      {embedMessage ? (
-        <p className="rounded-lg border border-dashed p-3 text-sm">
-          {embedMessage}
-        </p>
+      {message ? (
+        <p className="rounded-lg border border-dashed p-3 text-sm">{message}</p>
       ) : null}
     </div>
   );
