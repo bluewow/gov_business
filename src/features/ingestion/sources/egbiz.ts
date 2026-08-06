@@ -94,6 +94,20 @@ async function fetchListPage(
   return payload.value ?? [];
 }
 
+/**
+ * 기업마당에서 그대로 가져온 공고인지.
+ *
+ * egbiz 는 사실상 기업마당의 경기도 필터 뷰에 가까워서, 수집한 50건 중 48건이
+ * 기업마당 원문 링크를 갖고 있었다. 그대로 담으면 같은 공고가 두 소스에 중복 저장되고
+ * (실제로 62개 그룹이 겹쳤다) 추천 목록에도 두 번 나온다.
+ *
+ * 기업마당 어댑터가 원문을 더 풍부하게 가져오므로, 미러 건은 여기서 담지 않는다.
+ * 판별 근거는 수행기관 표기다 — "기업마당(고양산업진흥원)" 처럼 접두어가 붙는다.
+ */
+function isBizinfoMirror(row: ListRow): boolean {
+  return (text(row.outsdInstNm) ?? "").startsWith("기업마당");
+}
+
 /** `[인천] 2026년 …` 처럼 제목 앞에 붙는 지역 표기를 뽑아낸다 */
 function extractRegion(title: string): string | null {
   const matched = title.match(/^\s*\[([^\]]{2,10})\]/);
@@ -185,6 +199,7 @@ export const egbizAdapter: AnnouncementSourceAdapter = {
     const maxPages = options.maxPages ?? 2;
     const collected: RawAnnouncement[] = [];
     const seen = new Set<string>();
+    let skippedMirrors = 0;
 
     for (let page = 1; page <= maxPages; page += 1) {
       const rows = await fetchListPage(page, pageUnit);
@@ -195,6 +210,12 @@ export const egbizAdapter: AnnouncementSourceAdapter = {
         const title = text(row.bizNm);
         if (!externalId || !title || seen.has(externalId)) continue;
         seen.add(externalId);
+
+        // 기업마당 미러는 건너뛴다 (그쪽 어댑터가 원문을 더 잘 가져온다)
+        if (isBizinfoMirror(row)) {
+          skippedMirrors += 1;
+          continue;
+        }
 
         let body: string | null = null;
         let targetAudience: string | null = null;
@@ -251,7 +272,13 @@ export const egbizAdapter: AnnouncementSourceAdapter = {
       if (rows.length < pageUnit) break;
     }
 
-    if (collected.length === 0) {
+    if (skippedMirrors > 0) {
+      console.info(
+        `[egbiz] 기업마당 미러 ${skippedMirrors}건을 건너뛰었습니다 (중복 방지).`,
+      );
+    }
+
+    if (collected.length === 0 && skippedMirrors === 0) {
       console.warn(
         "[egbiz] 수집 0건입니다. 목록 JSON 응답 형식이 바뀌었을 수 있습니다.",
       );
