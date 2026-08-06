@@ -59,6 +59,15 @@ export const eligibilityVerdictEnum = pgEnum("eligibility_verdict", [
   "UNKNOWN",
 ]);
 
+/** 토큰을 쓰는 기능 — 어디서 얼마나 나갔는지 나누는 기준 */
+export const aiFeatureEnum = pgEnum("ai_feature", [
+  "EMBEDDING",
+  "EVALUATION",
+  "REVIEW",
+  "STRATEGY",
+  "DRAFT",
+]);
+
 export type AnnouncementSource =
   (typeof announcementSourceEnum.enumValues)[number];
 export type ParseStatus = (typeof parseStatusEnum.enumValues)[number];
@@ -398,6 +407,34 @@ export const applicationStrategies = pgTable("application_strategies", {
 });
 
 /** 수집 실행 기록 — 실패·0건 수집을 화면에서 확인하기 위한 것 */
+/**
+ * OpenAI 호출 1건의 토큰 사용량.
+ *
+ * 응답에 `usage` 가 늘 들어오는데 그동안 전부 버리고 있었다. 그래서 "어느 기능이
+ * 얼마나 쓰는지" 를 대시보드 밖에서는 알 수 없었고, 절감 논의도 전부 추정이었다.
+ * 기록 실패가 본 기능을 막으면 안 되므로 쓰기는 항상 best-effort 다.
+ */
+export const aiUsage = pgTable(
+  "ai_usage",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    feature: aiFeatureEnum().notNull(),
+    model: text().notNull(),
+
+    promptTokens: integer().notNull().default(0),
+    completionTokens: integer().notNull().default(0),
+    totalTokens: integer().notNull().default(0),
+
+    /** 이 호출 한 번이 처리한 건수 — 임베딩은 배치라 1행에 여러 건이 담긴다 */
+    items: integer().notNull().default(1),
+
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("ai_usage_feature_created_at_idx").on(table.feature, table.createdAt),
+  ],
+);
+
 export const ingestionRuns = pgTable(
   "ingestion_runs",
   {

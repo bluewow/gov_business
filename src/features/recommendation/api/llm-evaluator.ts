@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { env } from "@/lib/env";
+import { recordAiUsage } from "@/lib/ai-usage";
 import { getOpenAIClient } from "@/lib/openai";
 import { contentHash, truncate } from "@/lib/text";
 
@@ -96,6 +97,12 @@ async function evaluateOne(
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userPrompt },
       ],
+    });
+
+    await recordAiUsage({
+      feature: "EVALUATION",
+      model: env.evaluationModel(),
+      usage: response.usage,
     });
 
     const raw = response.choices[0]?.message?.content;

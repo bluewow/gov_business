@@ -1,4 +1,5 @@
 import {
+  aliasedTable,
   and,
   cosineDistance,
   eq,
@@ -6,12 +7,13 @@ import {
   isNotNull,
   isNull,
   lte,
+  notExists,
   or,
   sql,
   type SQL,
 } from "drizzle-orm";
 
-import { announcements, db, userBusinesses } from "@/db";
+import { announcements, applications, db, userBusinesses } from "@/db";
 
 import { normalizeKeywords } from "../keywords";
 import type { MatchedAnnouncement, MatchFilter } from "../types";
@@ -41,6 +43,33 @@ const selection = {
   isSample: announcements.isSample,
   embeddingHash: announcements.embeddingHash,
 };
+
+/**
+ * 이미 지원서로 담은 공고 제외 — 발굴 화면에서 결정 끝난 건이 자리를 먹지 않게.
+ *
+ * id 가 아니라 **제목**으로 잇는다. 같은 공고가 두 소스(BIZINFO·EGBIZ)에 별도 행으로
+ * 존재하는 경우가 있어서, id 만 빼면 담아둔 공고의 쌍둥이 행이 결과에 다시 나타난다
+ * (실제로 그렇게 새는 것을 확인했다).
+ */
+export function savedExclusionCondition(
+  businessId: string | null | undefined,
+): SQL | undefined {
+  if (!businessId) return undefined;
+
+  const saved = aliasedTable(announcements, "saved_announcements");
+  return notExists(
+    db
+      .select({ one: sql`1` })
+      .from(applications)
+      .innerJoin(saved, eq(saved.id, applications.announcementId))
+      .where(
+        and(
+          eq(applications.userBusinessId, businessId),
+          eq(saved.title, announcements.title),
+        ),
+      ),
+  );
+}
 
 function openCondition(filter: MatchFilter): SQL | undefined {
   if (!(filter.onlyOpen ?? true)) return undefined;
@@ -73,6 +102,7 @@ async function searchByVector(
         isNotNull(announcements.embedding),
         lte(distance, 1 - threshold),
         openCondition(filter),
+        savedExclusionCondition(filter.excludeSavedForBusinessId),
         options.useKeywordFilter
           ? keywordCondition(keywords, filter.keywordMode ?? "any")
           : undefined,

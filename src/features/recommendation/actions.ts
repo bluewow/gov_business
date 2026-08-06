@@ -96,6 +96,8 @@ async function recommendInner(
     keywords,
     keywordMode,
     onlyOpen: input.onlyOpen ?? true,
+    // 이미 담아둔 공고는 발굴 결과(와 LLM 평가 슬롯)에서 뺀다
+    excludeSavedForBusinessId: business.id,
     threshold: SIMILARITY_THRESHOLD,
     limit: input.useLlm
       ? Math.max(displayLimit, LLM_EVALUATION_CANDIDATES)

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { env } from "@/lib/env";
+import { recordAiUsage } from "@/lib/ai-usage";
 import { getOpenAIClient } from "@/lib/openai";
 import { truncate } from "@/lib/text";
 
@@ -123,6 +124,8 @@ export async function buildStrategy(
       { role: "user", content: userPrompt },
     ],
   });
+
+  await recordAiUsage({ feature: "STRATEGY", model, usage: response.usage });
 
   const raw = response.choices[0]?.message?.content;
   if (!raw) {

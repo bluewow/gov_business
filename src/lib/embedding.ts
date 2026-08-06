@@ -1,5 +1,6 @@
 import { EMBEDDING_DIMENSIONS } from "@/db/schema";
 import { env } from "@/lib/env";
+import { recordAiUsage } from "@/lib/ai-usage";
 import { getOpenAIClient } from "@/lib/openai";
 import { normalizeWhitespace, truncate } from "@/lib/text";
 
@@ -31,9 +32,7 @@ export async function createEmbedding(text: string): Promise<number[]> {
 }
 
 function isInputTooLongError(error: unknown): boolean {
-  return (
-    error instanceof Error && /maximum input length/i.test(error.message)
-  );
+  return error instanceof Error && /maximum input length/i.test(error.message);
 }
 
 export async function createEmbeddings(texts: string[]): Promise<number[][]> {
@@ -64,6 +63,12 @@ async function embedBatch(batch: string[]): Promise<number[][]> {
   for (let attempt = 0; ; attempt += 1) {
     try {
       const response = await openai.embeddings.create({ model, input: inputs });
+      await recordAiUsage({
+        feature: "EMBEDDING",
+        model,
+        usage: response.usage,
+        items: inputs.length,
+      });
 
       // API 는 index 순서를 보장하지 않으므로 명시적으로 정렬한다.
       const sorted = [...response.data].sort((a, b) => a.index - b.index);

@@ -11,6 +11,7 @@ import {
   keywordCondition,
   rankByKeywords,
 } from "./keyword-filter";
+import { savedExclusionCondition } from "./vector-search";
 
 /**
  * OPENAI_API_KEY 가 없을 때의 폴백 검색.
@@ -43,6 +44,11 @@ export async function keywordSearchAnnouncements(
       )!,
     );
   }
+
+  const savedExclusion = savedExclusionCondition(
+    filter.excludeSavedForBusinessId,
+  );
+  if (savedExclusion) conditions.push(savedExclusion);
 
   const rows = await db
     .select({

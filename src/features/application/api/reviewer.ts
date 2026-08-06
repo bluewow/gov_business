@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { env } from "@/lib/env";
+import { recordAiUsage } from "@/lib/ai-usage";
 import { getOpenAIClient } from "@/lib/openai";
 import { truncate } from "@/lib/text";
 
@@ -120,6 +121,8 @@ export async function reviewApplication(
       { role: "user", content: userPrompt },
     ],
   });
+
+  await recordAiUsage({ feature: "REVIEW", model, usage: response.usage });
 
   const raw = response.choices[0]?.message?.content;
   if (!raw) {

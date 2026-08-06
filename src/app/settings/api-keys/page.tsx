@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { AiUsagePanel } from "@/components/common/ai-usage-panel";
 import { ApiKeysPanel } from "@/components/common/api-keys-panel";
 import { LinkButton } from "@/components/common/link-button";
 import { PageShell } from "@/components/layout/page-shell";
@@ -26,6 +27,8 @@ export default async function ApiKeysPage() {
       }
     >
       <ApiKeysPanel fallback={fallback} />
+
+      <AiUsagePanel />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold">어디에 쓰이나요</h2>

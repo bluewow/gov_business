@@ -13,6 +13,12 @@ export interface MatchFilter {
   onlyOpen?: boolean;
   /** 코사인 유사도 하한 (0~1) */
   threshold?: number;
+  /**
+   * 이 사업이 이미 지원서로 담아둔 공고를 결과에서 뺀다.
+   * 추천은 "새 공고 발굴" 화면이라 이미 결정한 건이 자리(와 LLM 평가 슬롯)를
+   * 차지하면 낭비다. 담아둔 것은 STEP 4 에서 본다.
+   */
+  excludeSavedForBusinessId?: string | null;
   /** 반환 개수 */
   limit?: number;
 }

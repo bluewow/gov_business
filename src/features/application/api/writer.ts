@@ -1,4 +1,5 @@
 import { env } from "@/lib/env";
+import { recordAiUsage } from "@/lib/ai-usage";
 import { getOpenAIClient } from "@/lib/openai";
 import { truncate } from "@/lib/text";
 
@@ -35,6 +36,14 @@ export interface WriteDraftInput {
     targetAudience: string | null;
     /** 첨부파일에서 추출한 본문 */
     attachmentTexts?: string[];
+    /**
+     * 검토·전략이 첨부 공고문에서 이미 뽑아낸 핵심 (자격요건 판정·평가 관점 등).
+     *
+     * 이게 있으면 첨부 원문을 대폭 줄여 넣는다. 초안은 섹션마다 호출되는데
+     * 매번 같은 공고문 16,000자를 다시 보내면 4섹션에 64,000자가 나가고,
+     * 그 내용은 이미 검토·전략 단계에서 한 번 읽고 정리한 것이다.
+     */
+    brief?: string | null;
   };
   /** AI 검토에서 나온 보완 사항 — 초안에 미리 반영한다 */
   reviewHints?: {
@@ -79,12 +88,23 @@ export async function writeDraftSection(
       ? `지원대상: ${input.announcement.targetAudience}`
       : null,
     truncate(input.announcement.summary ?? input.announcement.content, 4000),
+    ...(input.announcement.brief
+      ? [
+          "",
+          "## 공고 핵심 (AI 검토·전략이 첨부 공고문에서 추출)",
+          input.announcement.brief,
+        ]
+      : []),
     ...(input.announcement.attachmentTexts?.length
       ? [
           "",
-          "## 공고 첨부파일 본문",
-          // 초안은 섹션마다 호출되므로 검토(24,000)보다는 보수적으로 잡는다
-          truncate(input.announcement.attachmentTexts.join("\n\n"), 16000),
+          "## 공고 첨부파일 본문(발췌)",
+          // 요약이 있으면 원문은 보조 근거로만 쓴다 — 섹션마다 같은 공고문을 통째로
+          // 다시 보내면 4섹션에 64,000자가 나간다.
+          truncate(
+            input.announcement.attachmentTexts.join("\n\n"),
+            input.announcement.brief ? 4000 : 16000,
+          ),
         ]
       : []),
     input.reviewHints &&
@@ -119,6 +139,8 @@ export async function writeDraftSection(
       { role: "user", content: userPrompt },
     ],
   });
+
+  await recordAiUsage({ feature: "DRAFT", model, usage: response.usage });
 
   const content = response.choices[0]?.message?.content?.trim();
   if (!content) {

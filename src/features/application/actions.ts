@@ -59,6 +59,44 @@ function extractedTexts(application: ApplicationDetail): string[] {
     .map((item) => `[첨부: ${item.fileName}]\n${item.extractedText}`);
 }
 
+/**
+ * 초안에 넘길 「공고 핵심」.
+ *
+ * 검토와 전략은 이미 첨부 공고문 전문을 읽고 자격요건·평가 관점을 뽑아 뒀다.
+ * 초안은 섹션마다 호출되므로, 그 원문을 매번 다시 보내면 4섹션에 6만 자가 나간다.
+ * 여기서 한 번 정리해 넘기고 첨부 원문은 보조 근거로만 붙인다.
+ */
+function buildAnnouncementBrief(application: ApplicationDetail): string | null {
+  const parts: string[] = [];
+
+  if (application.review) {
+    parts.push(`검토 총평: ${application.review.summary}`);
+
+    const checks = application.review.checks
+      .map((check) => `- ${check.requirement}: ${check.verdict} ${check.note}`)
+      .join("\n");
+    if (checks) parts.push(`자격요건 판정:\n${checks}`);
+
+    if (application.review.strengths.length) {
+      parts.push(`강점: ${application.review.strengths.join(" / ")}`);
+    }
+  }
+
+  if (application.strategy) {
+    if (application.strategy.evaluationFocus.length) {
+      parts.push(
+        `심사가 중요하게 보는 것: ${application.strategy.evaluationFocus.join(" / ")}`,
+      );
+    }
+    const points = application.strategy.strategyPoints
+      .map((point) => `- ${point.title}: ${point.detail}`)
+      .join("\n");
+    if (points) parts.push(`전략 포인트:\n${points}`);
+  }
+
+  return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
 /** AI 입력으로 쓸 첨부인지 켜고 끈다 */
 export async function setAttachmentUsage(
   applicationId: string,
@@ -365,6 +403,7 @@ async function generateDraftInner(
         agency: application.announcement.agency,
         targetAudience: application.announcement.targetAudience,
         attachmentTexts: extractedTexts(application),
+        brief: buildAnnouncementBrief(application),
       },
       reviewHints: application.review
         ? {
