@@ -9,6 +9,8 @@ export interface RawAnnouncement {
   title: string;
   content: string;
   url: string;
+  /** 공고가 가리키는 원문 링크 (egbiz 의 「관련사이트」 등) */
+  sourceUrl?: string | null;
   summary?: string | null;
   category?: string | null;
   region?: string | null;

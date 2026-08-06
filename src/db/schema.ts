@@ -132,6 +132,12 @@ export const announcements = pgTable(
     /** LLM 평가에 넣는 짧은 요약 */
     summary: text(),
     url: text().notNull(),
+    /**
+     * 공고가 가리키는 원문 링크(egbiz 의 「관련사이트」 등).
+     * egbiz 는 본문·첨부 없이 기업마당 공고를 링크만 걸어 두는 경우가 많아,
+     * 첨부 추출 시 이 주소를 따라가 실제 공고문을 찾는다.
+     */
+    sourceUrl: text(),
 
     category: text(),
     region: text(),

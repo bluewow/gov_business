@@ -345,7 +345,13 @@ async function generateAllDraftsInner(
  */
 export async function extractApplicationAttachments(
   applicationId: string,
-): Promise<ActionResult & { parsed?: number; total?: number }> {
+): Promise<
+  ActionResult & {
+    parsed?: number;
+    total?: number;
+    enrichedFromSource?: boolean;
+  }
+> {
   try {
     const application = await getApplicationDetail(applicationId);
     if (!application) return { ok: false, error: "지원서를 찾을 수 없습니다." };
@@ -357,7 +363,12 @@ export async function extractApplicationAttachments(
     revalidateApplication(applicationId);
 
     if (result.total === 0) {
-      return { ok: false, error: "이 공고에는 첨부파일이 없습니다." };
+      return {
+        ok: false,
+        error: application.announcement.sourceUrl
+          ? "이 공고와 연결된 원문에서도 첨부파일을 찾지 못했습니다."
+          : "이 공고에는 첨부파일이 없습니다.",
+      };
     }
     if (result.parsed === 0) {
       return {
@@ -368,7 +379,12 @@ export async function extractApplicationAttachments(
       };
     }
 
-    return { ok: true, parsed: result.parsed, total: result.total };
+    return {
+      ok: true,
+      parsed: result.parsed,
+      total: result.total,
+      enrichedFromSource: result.enrichedFromSource,
+    };
   } catch (error) {
     return { ok: false, error: toMessage(error) };
   }

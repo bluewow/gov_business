@@ -107,6 +107,8 @@ function extractRegion(title: string): string | null {
 async function fetchDetail(bizCyclId: string): Promise<{
   pick: (...labels: string[]) => string | null;
   overviewHtml: string;
+  bodyHtml: string;
+  sourceUrl: string | null;
   attachments: RawAttachment[];
 }> {
   const url = detailUrl(bizCyclId);
@@ -145,7 +147,19 @@ async function fetchDetail(bizCyclId: string): Promise<{
     });
   });
 
+  // 본문은 라벨 목록이 아니라 별도 블록에 있다
+  const bodyHtml = $(".conSec__con__contnets").first().html() ?? "";
+
+  // 「관련사이트」 는 기업마당 원문을 가리키는 경우가 많다 — 첨부 추출 시 여기를 따라간다
+  const sourceUrl =
+    $(".conSec__con__desc a[href]")
+      .toArray()
+      .map((element) => $(element).attr("href") ?? "")
+      .find((href) => /bizinfo\.go\.kr/i.test(href)) ?? null;
+
   return {
+    bodyHtml,
+    sourceUrl,
     pick: (...labels: string[]) => {
       for (const label of labels) {
         const found = fields.get(label);
@@ -185,15 +199,18 @@ export const egbizAdapter: AnnouncementSourceAdapter = {
         let body: string | null = null;
         let targetAudience: string | null = null;
         let attachments: RawAttachment[] = [];
+        let sourceUrl: string | null = null;
 
         await sleep(REQUEST_DELAY_MS);
         try {
           const detail = await fetchDetail(externalId);
           body =
+            normalizeWhitespace(stripHtml(detail.bodyHtml)) ||
             normalizeWhitespace(stripHtml(detail.overviewHtml)) ||
             detail.pick("사업개요", "지원내용");
           targetAudience = detail.pick("신청자격", "지원대상", "신청대상");
           attachments = detail.attachments;
+          sourceUrl = detail.sourceUrl;
         } catch (error) {
           // 상세 실패는 치명적이지 않다 — 목록 값만으로도 공고는 남긴다
           console.warn(`[egbiz] 상세 수집 실패: ${externalId}`, error);
@@ -219,6 +236,7 @@ export const egbizAdapter: AnnouncementSourceAdapter = {
           title,
           content,
           url: detailUrl(externalId),
+          sourceUrl,
           category: text(row.categoryNm) ?? text(row.sareaSeCd),
           region: extractRegion(title),
           targetAudience,

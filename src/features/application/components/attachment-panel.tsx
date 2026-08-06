@@ -37,17 +37,6 @@ export function AttachmentPanel({
     (item) => item.parseStatus === "PARSED",
   ).length;
 
-  if (attachments.length === 0) {
-    return (
-      <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-semibold">공고 첨부파일</h2>
-        <p className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
-          이 공고에는 첨부파일이 없습니다.
-        </p>
-      </section>
-    );
-  }
-
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -80,9 +69,20 @@ export function AttachmentPanel({
             ? "추출 중…"
             : parsed > 0
               ? "다시 추출"
-              : `첨부 ${attachments.length}건 본문 추출`}
+              : attachments.length > 0
+                ? `첨부 ${attachments.length}건 본문 추출`
+                : "원문에서 공고문 찾기"}
         </Button>
       </div>
+
+      {attachments.length === 0 ? (
+        <p className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm leading-6">
+          이 공고에는 첨부파일이 등록돼 있지 않습니다.
+          {application.announcement.sourceUrl
+            ? " 다만 연결된 원문(기업마당)에 공고문이 있을 수 있어, 버튼을 누르면 그쪽에서 찾아옵니다."
+            : ""}
+        </p>
+      ) : null}
 
       <ul className="flex flex-col gap-2">
         {attachments.map((attachment) => (

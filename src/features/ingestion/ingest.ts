@@ -12,7 +12,7 @@ import { isAiEnabled } from "@/lib/env";
 import { contentHash, normalizeWhitespace, truncate } from "@/lib/text";
 
 import { parseAttachment } from "./attachment-parser";
-import { bizinfoAdapter } from "./sources/bizinfo";
+import { bizinfoAdapter, fetchBizinfoByUrl } from "./sources/bizinfo";
 import { egbizAdapter } from "./sources/egbiz";
 import { kStartupAdapter } from "./sources/k-startup";
 import type {
@@ -166,6 +166,7 @@ async function upsertAnnouncement(raw: RawAnnouncement) {
     content: raw.content,
     summary: raw.summary ?? truncate(raw.content, 300),
     url: raw.url,
+    sourceUrl: raw.sourceUrl ?? null,
     category: raw.category ?? null,
     region: raw.region ?? null,
     targetAudience: raw.targetAudience ?? null,
@@ -185,6 +186,7 @@ async function upsertAnnouncement(raw: RawAnnouncement) {
         content: values.content,
         summary: values.summary,
         url: values.url,
+        sourceUrl: values.sourceUrl,
         category: values.category,
         region: values.region,
         targetAudience: values.targetAudience,
@@ -279,14 +281,29 @@ export interface AttachmentExtractionResult {
  */
 export async function extractAttachmentsForAnnouncement(
   announcementId: string,
-): Promise<AttachmentExtractionResult> {
+): Promise<AttachmentExtractionResult & { enrichedFromSource: boolean }> {
+  let enrichedFromSource = false;
+
+  // 첨부가 없으면 「관련사이트」 원문에서 가져올 수 있는지 먼저 본다
+  const [existing] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(announcementAttachments)
+    .where(eq(announcementAttachments.announcementId, announcementId));
+
+  if ((existing?.count ?? 0) === 0) {
+    const enriched = await enrichFromSourceUrl(announcementId);
+    enrichedFromSource =
+      enriched.attachmentsAdded > 0 || enriched.contentImproved;
+  }
+
   const attachments = await db
     .select()
     .from(announcementAttachments)
     .where(eq(announcementAttachments.announcementId, announcementId))
     .orderBy(asc(announcementAttachments.createdAt));
 
-  const result: AttachmentExtractionResult = {
+  const result: AttachmentExtractionResult & { enrichedFromSource: boolean } = {
+    enrichedFromSource,
     total: attachments.length,
     parsed: 0,
     failed: 0,
@@ -301,6 +318,66 @@ export async function extractAttachmentsForAnnouncement(
   }
 
   return result;
+}
+
+/**
+ * 공고가 「관련사이트」로 기업마당 원문을 가리키면 그쪽에서 본문·첨부를 보강한다.
+ *
+ * egbiz 는 본문 없이 링크만 걸어 두는 공고가 많다 — 실제 공고문 PDF 는 기업마당에 있다.
+ * 첨부 추출을 요청했을 때 첨부가 하나도 없으면 이 경로를 한 번 시도한다.
+ */
+export async function enrichFromSourceUrl(
+  announcementId: string,
+): Promise<{ attachmentsAdded: number; contentImproved: boolean }> {
+  const [row] = await db
+    .select({
+      id: announcements.id,
+      sourceUrl: announcements.sourceUrl,
+      content: announcements.content,
+    })
+    .from(announcements)
+    .where(eq(announcements.id, announcementId));
+
+  if (!row?.sourceUrl) return { attachmentsAdded: 0, contentImproved: false };
+
+  const linked = await fetchBizinfoByUrl(row.sourceUrl);
+  if (!linked) return { attachmentsAdded: 0, contentImproved: false };
+
+  const attachments = linked.attachments ?? [];
+  if (attachments.length > 0) {
+    await db
+      .insert(announcementAttachments)
+      .values(
+        attachments.map((attachment) => ({
+          announcementId,
+          fileName: attachment.fileName,
+          fileUrl: attachment.fileUrl,
+          mimeType: attachment.mimeType ?? null,
+        })),
+      )
+      .onConflictDoNothing({
+        target: [
+          announcementAttachments.announcementId,
+          announcementAttachments.fileUrl,
+        ],
+      });
+  }
+
+  // 원문 본문이 더 길면 교체한다 (egbiz 본문은 링크 안내뿐인 경우가 많다)
+  const improved = linked.content.length > row.content.length;
+  if (improved) {
+    await db
+      .update(announcements)
+      .set({
+        content: linked.content,
+        summary: truncate(linked.content, 300),
+        targetAudience: linked.targetAudience ?? undefined,
+        embeddingHash: null,
+      })
+      .where(eq(announcements.id, announcementId));
+  }
+
+  return { attachmentsAdded: attachments.length, contentImproved: improved };
 }
 
 /** 첨부 하나를 받아 추출하고 저장한다. 성공이면 true, 아니면 상태 문자열 */

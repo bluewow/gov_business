@@ -158,6 +158,22 @@ function parsePeriod(value: string | null): {
   };
 }
 
+/**
+ * 기업마당 공고 URL 에서 pblancId 를 뽑는다.
+ * egbiz 처럼 다른 사이트가 기업마당 원문을 링크로만 걸어 둘 때 쓴다.
+ */
+export function pblancIdFromUrl(url: string): string | null {
+  return url.match(/pblancId=(PBLN_[0-9]+)/)?.[1] ?? null;
+}
+
+/** 링크로 받은 기업마당 원문에서 본문·첨부를 가져온다 */
+export async function fetchBizinfoByUrl(
+  url: string,
+): Promise<RawAnnouncement | null> {
+  const pblancId = pblancIdFromUrl(url);
+  return pblancId ? fetchDetail(pblancId) : null;
+}
+
 async function fetchDetail(pblancId: string): Promise<RawAnnouncement | null> {
   const url = detailUrl(pblancId);
   const $ = cheerio.load(await fetchHtml(url));
