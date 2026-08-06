@@ -5,6 +5,7 @@ export {
   generateDraft,
   removeApplication,
   runReview,
+  runStrategy,
   saveApplication,
   saveDraft,
   updateApplicationStatus,
@@ -23,6 +24,7 @@ export { ApplicationStatusControl } from "./components/application-status-contro
 export { AttachmentPanel } from "./components/attachment-panel";
 export { DraftEditor } from "./components/draft-editor";
 export { ReviewPanel } from "./components/review-panel";
+export { StrategyPanel } from "./components/strategy-panel";
 export { SaveApplicationButton } from "./components/save-application-button";
 export { DRAFT_SECTIONS } from "./sections";
 export { STATUS_LABELS, STATUS_ORDER } from "./status";

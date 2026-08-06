@@ -10,6 +10,7 @@ import {
   applicationDrafts,
   applicationEligibilityChecks,
   applicationReviews,
+  applicationStrategies,
   applications,
   db,
   type ApplicationStatus,
@@ -25,6 +26,7 @@ import {
   type ApplicationDetail,
 } from "./api/application-queries";
 import { reviewApplication } from "./api/reviewer";
+import { buildStrategy } from "./api/strategist";
 import { writeDraftSection } from "./api/writer";
 import { DRAFT_SECTIONS, getSection } from "./sections";
 
@@ -229,6 +231,87 @@ async function runReviewInner(applicationId: string): Promise<ActionResult> {
   }
 }
 
+/**
+ * STEP 4-1.5: 합격 전략 수립 (다시 수립하면 덮어쓴다)
+ *
+ * 요건 검토가 "지원 가능한가"라면 이건 "어떻게 써야 뽑히는가"다.
+ * 첨부 공고문(평가기준·배점)이 추출돼 있을수록 정확해지고,
+ * 결과의 sectionGuides 는 초안 생성이 그대로 따른다.
+ */
+export async function runStrategy(
+  applicationId: string,
+  keys?: RuntimeKeys,
+): Promise<ActionResult> {
+  return withRuntimeKeys(keys, () => runStrategyInner(applicationId));
+}
+
+async function runStrategyInner(applicationId: string): Promise<ActionResult> {
+  if (!isAiEnabled()) {
+    return {
+      ok: false,
+      error:
+        "OpenAI API 키가 없어 전략을 수립할 수 없습니다. 사이드바 「설정 → API 키」 에서 입력해 주세요.",
+    };
+  }
+
+  try {
+    const application = await getApplicationDetail(applicationId);
+    if (!application) return { ok: false, error: "지원서를 찾을 수 없습니다." };
+
+    const { payload, model } = await buildStrategy({
+      business: {
+        title: application.userBusiness.title,
+        description: application.userBusiness.description,
+        region: application.userBusiness.region,
+        category: application.userBusiness.category,
+        businessAgeMonth: application.userBusiness.businessAgeMonth,
+        keywords: application.userBusiness.keywords,
+      },
+      announcement: {
+        title: application.announcement.title,
+        summary: application.announcement.summary,
+        content: application.announcement.content,
+        agency: application.announcement.agency,
+        targetAudience: application.announcement.targetAudience,
+        attachmentTexts: extractedTexts(application),
+      },
+      review: application.review
+        ? {
+            strengths: application.review.strengths,
+            weaknesses: application.review.weaknesses,
+          }
+        : null,
+    });
+
+    await db
+      .insert(applicationStrategies)
+      .values({
+        applicationId,
+        positioning: payload.positioning,
+        evaluationFocus: payload.evaluationFocus,
+        strategyPoints: payload.strategyPoints,
+        sectionGuides: payload.sectionGuides,
+        model,
+      })
+      .onConflictDoUpdate({
+        target: [applicationStrategies.applicationId],
+        set: {
+          positioning: payload.positioning,
+          evaluationFocus: payload.evaluationFocus,
+          strategyPoints: payload.strategyPoints,
+          sectionGuides: payload.sectionGuides,
+          model,
+          updatedAt: new Date(),
+        },
+      });
+
+    revalidateApplication(applicationId);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: toMessage(error) };
+  }
+}
+
 /** STEP 4-2: 섹션 초안 생성 (해당 섹션만 덮어쓴다) */
 export async function generateDraft(
   applicationId: string,
@@ -287,6 +370,13 @@ async function generateDraftInner(
         ? {
             weaknesses: application.review.weaknesses,
             actionItems: application.review.actionItems,
+          }
+        : null,
+      strategy: application.strategy
+        ? {
+            positioning: application.strategy.positioning,
+            sectionGuide:
+              application.strategy.sectionGuides[sectionKey] ?? null,
           }
         : null,
       existingSections: application.drafts

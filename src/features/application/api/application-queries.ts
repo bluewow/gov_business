@@ -58,6 +58,7 @@ export async function getApplicationDetail(id: string) {
           checks: { orderBy: asc(applicationEligibilityChecks.order) },
         },
       },
+      strategy: true,
       drafts: { orderBy: asc(applicationDrafts.order) },
     },
   });

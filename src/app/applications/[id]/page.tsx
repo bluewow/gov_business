@@ -12,6 +12,7 @@ import {
   AttachmentPanel,
   DraftEditor,
   ReviewPanel,
+  StrategyPanel,
   getApplicationDetail,
 } from "@/features/application";
 import { daysUntil, formatDate } from "@/lib/format";
@@ -98,6 +99,8 @@ export default async function ApplicationDetailPage({
       <AttachmentPanel application={application} />
       <Separator />
       <ReviewPanel application={application} />
+      <Separator />
+      <StrategyPanel application={application} />
       <Separator />
       <DraftEditor application={application} />
 

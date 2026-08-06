@@ -4,6 +4,7 @@ import {
   doublePrecision,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   text,
@@ -362,6 +363,40 @@ export const llmEvaluations = pgTable(
   ],
 );
 
+/** 전략 포인트 하나 — 무엇을(title) 왜·어떻게(detail) */
+export interface StrategyPoint {
+  title: string;
+  detail: string;
+}
+
+/**
+ * 합격 전략 (지원서당 1건, 다시 수립하면 덮어쓴다).
+ *
+ * 요건 검토가 "지원 가능한가"를 답한다면, 이건 "어떻게 써야 뽑히는가"를 답한다.
+ * 공고(특히 첨부 공고문의 평가기준·배점)를 근거로 내 사업의 포지셔닝과
+ * 섹션별 작성 전략을 뽑아 두고, 초안 생성이 이를 그대로 따른다.
+ */
+export const applicationStrategies = pgTable("application_strategies", {
+  id: uuid().primaryKey().defaultRandom(),
+  applicationId: uuid()
+    .notNull()
+    .unique()
+    .references(() => applications.id, { onDelete: "cascade" }),
+
+  /** 이 공고에 맞춘 내 사업의 포지셔닝 — 한 문단 */
+  positioning: text().notNull(),
+  /** 공고·심사가 중요하게 보는 것 (평가기준에서 추출) */
+  evaluationFocus: text().array().notNull().default(emptyTextArray),
+  /** 따내기 위한 전략 포인트 */
+  strategyPoints: jsonb().$type<StrategyPoint[]>().notNull().default([]),
+  /** PSST 섹션 키 → 그 섹션을 어떻게 쓸지 (초안 생성이 그대로 따른다) */
+  sectionGuides: jsonb().$type<Record<string, string>>().notNull().default({}),
+
+  /** 수립에 사용한 모델 — 재현/디버깅용 */
+  model: text().notNull(),
+  ...timestamps,
+});
+
 /** 수집 실행 기록 — 실패·0건 수집을 화면에서 확인하기 위한 것 */
 export const ingestionRuns = pgTable(
   "ingestion_runs",
@@ -434,7 +469,21 @@ export const applicationsRelations = relations(
       fields: [applications.id],
       references: [applicationReviews.applicationId],
     }),
+    strategy: one(applicationStrategies, {
+      fields: [applications.id],
+      references: [applicationStrategies.applicationId],
+    }),
     drafts: many(applicationDrafts),
+  }),
+);
+
+export const applicationStrategiesRelations = relations(
+  applicationStrategies,
+  ({ one }) => ({
+    application: one(applications, {
+      fields: [applicationStrategies.applicationId],
+      references: [applications.id],
+    }),
   }),
 );
 
@@ -489,6 +538,7 @@ export type AnnouncementAttachment =
   typeof announcementAttachments.$inferSelect;
 export type Application = typeof applications.$inferSelect;
 export type ApplicationReview = typeof applicationReviews.$inferSelect;
+export type ApplicationStrategy = typeof applicationStrategies.$inferSelect;
 export type ApplicationDraft = typeof applicationDrafts.$inferSelect;
 export type IngestionRun = typeof ingestionRuns.$inferSelect;
 export type LlmEvaluation = typeof llmEvaluations.$inferSelect;

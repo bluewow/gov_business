@@ -18,7 +18,7 @@
 |        | `/announcements` 공고 목록  | 제목 검색 · 마감여부/정렬 필터 · 바로 지원서로 담기 |
 | STEP 3 | `/recommendations` 큐레이션 | 키워드 + 프로필 임베딩 기준 추천 → 담기             |
 | STEP 4 | `/applications` 지원 관리   | 담아둔 공고 목록 · 진행 상태                        |
-|        | `/applications/[id]` 상세   | AI 요건 검토 + 사업계획서 섹션별 초안 생성/편집     |
+|        | `/applications/[id]` 상세   | 첨부 추출 → AI 요건 검토 → 합격 전략 → 섹션별 초안  |
 
 ## 아키텍처
 
@@ -38,8 +38,11 @@
   3차 LLM 정밀 평가 (후보 30건)    ─┘ gpt-4o-mini → {score, reason} → 상위 10건 표시
               ↓
 [지원서]                                           src/features/application/
-  AI 요건 검토   reviewer.ts → {fitScore, checks[], strengths, weaknesses, actionItems}
-  초안 작성      writer.ts   → PSST 4개 섹션 (문제인식/실현가능성/성장전략/팀)
+  첨부 추출      attachment-panel → 공고문 PDF·HWPX·HWP 본문 확보 (버튼 요청 시)
+  AI 요건 검토   reviewer.ts   → "지원 가능한가" {fitScore, checks[], ...}
+  합격 전략      strategist.ts → "어떻게 써야 뽑히는가" {positioning, evaluationFocus,
+                                  strategyPoints, sectionGuides}  ← 첨부의 평가기준을 근거로
+  초안 작성      writer.ts     → PSST 4개 섹션. 전략의 sectionGuides 를 그대로 따른다
               ↓
 [Next.js App Router UI + Server Action]            src/app/, src/features/*/components/
 ```

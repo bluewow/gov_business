@@ -41,6 +41,12 @@ export interface WriteDraftInput {
     weaknesses: string[];
     actionItems: string[];
   } | null;
+  /** 합격 전략 — 있으면 초안이 이 방향을 그대로 따른다 */
+  strategy?: {
+    positioning: string;
+    /** 이 섹션에 대한 작성 전략 (sectionGuides[section.key]) */
+    sectionGuide: string | null;
+  } | null;
   /** 이미 작성된 다른 섹션 — 중복 서술을 피하기 위한 참고용 */
   existingSections?: { title: string; content: string }[];
 }
